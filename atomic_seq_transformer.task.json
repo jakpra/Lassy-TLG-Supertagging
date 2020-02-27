@@ -1,0 +1,8 @@
+{
+  "name": "atomic_seq_transformer",
+  "tagset": "atomic.json",
+  "decoder": "transf_seq",
+  "complete": true,
+  "max_len": 100,
+  "featurized": false
+}

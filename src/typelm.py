@@ -1,10 +1,10 @@
-from Transformer.src.utils import (FuzzyLoss, CustomLRScheduler, noam_scheme, Mask, PE, DecoderInput, sigsoftmax,
+from Transformers.utils import (FuzzyLoss, CustomLRScheduler, noam_scheme, Mask, PE, DecoderInput, sigsoftmax,
                                    EncoderInput)
-from Transformer.src.Transformer import Encoder
-from Transformer.src.utils import ScaledDotProduct
+from Transformers.Transformer import Encoder
+from Transformers.utils import ScaledDotProduct
 from src.Network import accuracy
 
-from LassyExtraction.src.utils.PostProcess import count_occurrences, freqsort
+# from LassyExtraction.src.utils.PostProcess import count_occurrences, freqsort
 
 import torch
 from torch import nn
