@@ -4,6 +4,7 @@ from Transformers.utils import FuzzyLoss, CustomLRScheduler, noam_scheme, make_m
 import torch
 from torch import nn
 from torch.nn import functional as F
+import torch.cuda as cuda
 from src.dataprep import TLGDataset
 from torch import optim
 from torch.nn.utils.rnn import pad_sequence
@@ -333,7 +334,7 @@ def do_everything(tlg=None):
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
 
-    if args.cuda and torch.nn.cuda.is_available():
+    if args.cuda and cuda.is_available():
         args.device = 'cuda'
     else:
         args.device = 'cpu'
