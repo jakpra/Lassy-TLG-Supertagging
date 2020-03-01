@@ -78,7 +78,8 @@ class Supertagger(nn.Module):
             batch_x = dataset.X[permutation[i]]
             batch_y = dataset.Y[permutation[i]]
 
-            lens = list(map(len, batch_x))
+            # lens = list(map(len, batch_x))
+            lens = torch.sum((batch_x.word != dataset.type_dict[PAD]).long(), dim=1).to(self.device)
 
             # batch_x = pad_sequence(batch_x, batch_first=True).to(self.device)
             # batch_y = pad_sequence(batch_y, batch_first=True).long().to(self.device)
@@ -140,7 +141,7 @@ class Supertagger(nn.Module):
                 batch_y = dataset.Y[permutation[i]]
 
                 # lens = list(map(len, batch_x))
-                lens = torch.sum((batch_x.word != dataset.type_dict[PAD]).long(), dim=1)
+                lens = torch.sum((batch_x.word != dataset.type_dict[PAD]).long(), dim=1).to(self.device)
 
                 # batch_x = pad_sequence(batch_x, batch_first=True).to(self.device)
                 # batch_y = pad_sequence(batch_y, batch_first=True).long().to(self.device)
@@ -225,7 +226,7 @@ class Supertagger(nn.Module):
                 # batch_y = dataset.Y[permutation[i]]  # TODO: is truncating the output to the gold standard fair game?
 
                 # lens = list(map(len, batch_x))
-                lens = torch.sum((batch_x.word != dataset.type_dict[PAD]).long(), dim=1)
+                lens = torch.sum((batch_x.word != dataset.type_dict[PAD]).long(), dim=1).to(self.device)
 
                 # batch_x = pad_sequence(batch_x, batch_first=True).to(self.device)
 
