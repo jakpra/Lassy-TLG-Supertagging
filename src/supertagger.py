@@ -380,6 +380,8 @@ def do_everything(tlg=None):
 
     model.transformer.encoder = EncoderWrapper(st.span_encoder)
 
+    model = model.to(args.device)
+
     L = FuzzyLoss(torch.nn.KLDivLoss(reduction='batchmean'), num_classes, 0.2, gen.out_to_ix[PAD])
 
     print(model, file=sys.stderr)
@@ -393,7 +395,7 @@ def do_everything(tlg=None):
             with open(f'{args.model}.pt', 'rb') as f:
                 # self_dict = n.state_dict()
                 # import re
-                checkpoint = torch.load(f)
+                checkpoint = torch.load(f, map_location=args.device)
                 # for k, p in pretrained.items():
                     # TODO: I assume these are for a model that was pretrained with a different architecture (TypeLM)?
                     # k = re.sub(r'network', 'transformer.decoder', k)
@@ -514,7 +516,7 @@ def do_everything(tlg=None):
 
     print('Found model. Loading parameters...', file=sys.stderr)
     with open(f'{args.model}.pt', 'rb') as f:
-        checkpoint = torch.load(f)
+        checkpoint = torch.load(f, map_location=args.device)
     model.load_state_dict(checkpoint.get('model_state_dict', checkpoint))
 
     best_val = checkpoint.get('dev_acc', 0.0)
