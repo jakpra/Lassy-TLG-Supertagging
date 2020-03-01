@@ -152,6 +152,10 @@ class Supertagger(nn.Module):
                 encoder_mask = encoder_mask.to(self.device)
                 batch_p = self.transformer.infer(batch_x, encoder_mask, dataset.type_dict[START],
                                                  dataset.type_dict[SEP], lens)
+                if batch_p.size(1) < batch_y.shape[1]:
+                    batch_p = torch.cat([batch_p,
+                                         torch.zeros(batch_y.shape[0], batch_y.shape[1] - batch_p.size(1)).to(batch_p)],
+                                        dim=1)
                 batch_loss = criterion(torch.log(batch_p[:, :-1]).permute(0, 2, 1), batch_y[:, 1:].to(self.device))
                 loss += batch_loss.item()
                 argmaxes = batch_p[:, :-1].argmax(dim=-1)
