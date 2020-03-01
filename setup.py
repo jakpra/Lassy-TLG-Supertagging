@@ -7,7 +7,7 @@ setup(
     name='Lassy-TLG-Supertagging',
     version='0.0.0',
     # install_requires=requirements,
-    packages=['Lassy.src'],
+    packages=['src'],
     url='',
     license='',
     author='',
