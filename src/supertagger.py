@@ -148,7 +148,8 @@ class Supertagger(nn.Module):
                 for i, l in enumerate(lens):
                     encoder_mask[i, :, l::] = 0
                 encoder_mask = encoder_mask.to(self.device)
-                batch_p = self.transformer.infer(batch_x, encoder_mask, dataset.type_dict[START])
+                batch_p = self.transformer.infer(batch_x, encoder_mask, dataset.type_dict[START],
+                                                 dataset.type_dict[SEP], lens)
                 batch_loss = criterion(torch.log(batch_p[:, :-1]).permute(0, 2, 1), batch_y[:, 1:])
                 loss += batch_loss.item()
                 argmaxes = batch_p[:, :-1].argmax(dim=-1)
@@ -378,6 +379,8 @@ def do_everything(tlg=None):
 
     model.transformer.encoder = EncoderWrapper(st.span_encoder)
 
+    L = FuzzyLoss(torch.nn.KLDivLoss(reduction='batchmean'), num_classes, 0.2, gen.out_to_ix[PAD])
+
     print(model, file=sys.stderr)
 
     if args.mode == Mode.train:
@@ -404,6 +407,7 @@ def do_everything(tlg=None):
                 # n.load_state_dict(self_dict)
             model.load_state_dict(checkpoint.get('model_state_dict', checkpoint))
             best_val = checkpoint.get('dev_acc', 0.0)
+            best_atom_val = checkpoint.get('dev_atom_acc', 0.0)
             best_val_loss = checkpoint.get('dev_loss', None)
             start_epoch = checkpoint.get('epoch', 0)
 
@@ -420,9 +424,25 @@ def do_everything(tlg=None):
 
             print('best epoch:', start_epoch, file=sys.stderr)
             print('best dev acc:', best_val, file=sys.stderr)
+            print('best dev atomic acc:', best_atom_val, file=sys.stderr)
             print('best dev loss:', best_val_loss, file=sys.stderr)
 
             print('Resuming training...', file=sys.stderr)
+
+            loss, bs, bts, bw, btw, bc, btc, gold_categories, generated_categories, correct_categories = \
+                model.eval_epoch(tlg, batch_size, val_indices, gen, L)
+            cat_acc = btc / bc
+            print('Epoch {}'.format(start_epoch))
+            print(' VALIDATION Loss: {}, Sentence Accuracy: {}, Atomic Accuracy: {}, Category Accuracy: {}'.format(
+                loss, bts / bs, btw / bw, cat_acc))
+
+            print(f'most common gold categories (out of {bc} in dev): '
+                  f'{" | ".join(str(item) for item in gold_categories.most_common(10))}')
+            print(f'most common generated categories (out of {bc} in dev): '
+                  f'{" | ".join(str(item) for item in generated_categories.most_common(10))}')
+            print(f'most common correct categories (out of {bc} in dev): '
+                  f'{" | ".join(str(item) for item in correct_categories.most_common(10))}')
+
         else:
             print('Model not found. Starting from scratch...', file=sys.stderr)
             best_val = 0.0
@@ -438,8 +458,6 @@ def do_everything(tlg=None):
                   file=sys.stderr)
 
         assert(all(list(map(lambda x: x.requires_grad, model.parameters()))))
-
-        L = FuzzyLoss(torch.nn.KLDivLoss(reduction='batchmean'), num_classes, 0.2, gen.out_to_ix[PAD])
 
         param_groups = [{'params': model.transformer.decoder.parameters(), 'lr': args.learning_rate}]
         if args.span_encoder in ('bert', 'roberta', 'albert'):
@@ -460,7 +478,7 @@ def do_everything(tlg=None):
 
         for i in range(start_epoch, start_epoch+epochs):
             loss, bs, bts, bw, btw = model.train_epoch(tlg, batch_size, L, o, train_indices)
-            print('Epoch {}'.format(i))
+            print('Epoch {}'.format(i+1))
             print(' Loss: {}, Sentence Accuracy: {}, Atomic Accuracy: {}'.format(loss, bts/bs, btw/bw))
             # if i % 5 == 0 and i != 0:
             if i % args.n_print == args.n_print - 1 and i != 0:
@@ -482,13 +500,12 @@ def do_everything(tlg=None):
                 # if bts/bs > best_val:
                 #     best_val = bts/bs
                 if cat_acc > best_val or cat_acc == best_val and (best_val_loss is None or loss < best_val_loss):
-                    best_val_loss = loss
                     best_epoch = i + 1
-                    best_val = cat_acc
                     checkpoint = {'model_state_dict': model.state_dict(),
                                   'epoch': best_epoch,
-                                  'dec_acc': best_val,
-                                  'dev_loss': best_val_loss
+                                  'dev_acc': cat_acc,
+                                  'dev_atom_acc': btw/bw,
+                                  'dev_loss': loss
                                   }
                     # with open('model_{}_{}.pt'.format(i, btw/bw), 'wb') as f:
                     with open(f'{args.model}.pt', 'wb') as f:
@@ -500,6 +517,7 @@ def do_everything(tlg=None):
     model.load_state_dict(checkpoint.get('model_state_dict', checkpoint))
 
     best_val = checkpoint.get('dev_acc', 0.0)
+    best_atom_val = checkpoint.get('dev_atom_acc', 0.0)
     best_val_loss = checkpoint.get('dev_loss', None)
     start_epoch = checkpoint.get('epoch', 0)
 
@@ -516,6 +534,7 @@ def do_everything(tlg=None):
 
     print('best epoch:', start_epoch, file=sys.stderr)
     print('best dev acc:', best_val, file=sys.stderr)
+    print('best dev atomic acc:', best_atom_val, file=sys.stderr)
     print('best dev loss:', best_val_loss, file=sys.stderr)
 
     argmaxes = model.infer_epoch(tlg, batch_size, test_indices, gen.max_len + 1)  # max_len argument is per-word, not for whole sequence!!!

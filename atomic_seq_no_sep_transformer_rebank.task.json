@@ -1,5 +1,5 @@
 {
-  "name": "atomic_seq_transformer",
+  "name": "atomic_seq_no_sep_transformer",
   "tagset": "atomic_rebank.json",
   "decoder": "transf_seq",
   "complete": true,

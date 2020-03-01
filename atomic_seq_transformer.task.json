@@ -1,6 +1,6 @@
 {
   "name": "atomic_seq_transformer",
-  "tagset": "atomic_rebank.json",
+  "tagset": "atomic.json",
   "decoder": "transf_seq",
   "complete": true,
   "max_len": 64,
