@@ -368,7 +368,7 @@ def do_everything(tlg=None):
     # num_classes = len(tlg.type_dict) + 1
     num_classes = gen.output_dim + 1
     # print('Training on {} classes'.format(len(tlg.type_dict)))
-    print('Training on {} classes'.format(gen.output_dim))
+    print('Training on {} classes'.format(gen.output_dim), file=sys.stderr)
     # n = Supertagger(num_classes, 4, 3, 3, 600, dropout=0.2, device='cuda', d_model=d_model)
     model = Supertagger(num_classes + 1, encoder_heads=3, decoder_heads=8, encoder_layers=1,
                     decoder_layers=2, d_intermediate=d_model, device=args.device, dropout=dropout, d_model=d_model,
@@ -440,16 +440,16 @@ def do_everything(tlg=None):
             loss, bs, bts, bw, btw, bc, btc, gold_categories, generated_categories, correct_categories = \
                 model.eval_epoch(tlg, batch_size, val_indices, gen, L)
             cat_acc = btc / bc
-            print('Epoch {}'.format(start_epoch))
+            print('Epoch {}'.format(start_epoch), file=sys.stderr)
             print(' VALIDATION Loss: {}, Sentence Accuracy: {}, Atomic Accuracy: {}, Category Accuracy: {}'.format(
-                loss, bts / bs, btw / bw, cat_acc))
+                loss, bts / bs, btw / bw, cat_acc), file=sys.stderr)
 
             print(f'most common gold categories (out of {bc} in dev): '
-                  f'{" | ".join(str(item) for item in gold_categories.most_common(10))}')
+                  f'{" | ".join(str(item) for item in gold_categories.most_common(10))}', file=sys.stderr)
             print(f'most common generated categories (out of {bc} in dev): '
-                  f'{" | ".join(str(item) for item in generated_categories.most_common(10))}')
+                  f'{" | ".join(str(item) for item in generated_categories.most_common(10))}', file=sys.stderr)
             print(f'most common correct categories (out of {bc} in dev): '
-                  f'{" | ".join(str(item) for item in correct_categories.most_common(10))}')
+                  f'{" | ".join(str(item) for item in correct_categories.most_common(10))}', file=sys.stderr)
 
         else:
             print('Model not found. Starting from scratch...', file=sys.stderr)
@@ -486,22 +486,22 @@ def do_everything(tlg=None):
 
         for i in range(start_epoch, start_epoch+epochs):
             loss, bs, bts, bw, btw = model.train_epoch(tlg, batch_size, L, o, train_indices)
-            print('Epoch {}'.format(i+1))
-            print(' Loss: {}, Sentence Accuracy: {}, Atomic Accuracy: {}'.format(loss, bts/bs, btw/bw))
+            print('Epoch {}'.format(i+1), file=sys.stderr)
+            print(' Loss: {}, Sentence Accuracy: {}, Atomic Accuracy: {}'.format(loss, bts/bs, btw/bw), file=sys.stderr)
             # if i % 5 == 0 and i != 0:
             if i % args.n_print == args.n_print - 1 and i != 0:
                 loss, bs, bts, bw, btw, bc, btc, gold_categories, generated_categories, correct_categories = \
                     model.eval_epoch(tlg, batch_size, val_indices, gen, L)
                 cat_acc = btc/bc
                 print(' VALIDATION Loss: {}, Sentence Accuracy: {}, Atomic Accuracy: {}, Category Accuracy: {}'.format(
-                    loss, bts / bs, btw / bw, cat_acc))
+                    loss, bts / bs, btw / bw, cat_acc), file=sys.stderr)
 
                 print(f'most common gold categories (out of {bc} in dev): '
-                      f'{" | ".join(str(item) for item in gold_categories.most_common(10))}')
+                      f'{" | ".join(str(item) for item in gold_categories.most_common(10))}', file=sys.stderr)
                 print(f'most common generated categories (out of {bc} in dev): '
-                      f'{" | ".join(str(item) for item in generated_categories.most_common(10))}')
+                      f'{" | ".join(str(item) for item in generated_categories.most_common(10))}', file=sys.stderr)
                 print(f'most common correct categories (out of {bc} in dev): '
-                      f'{" | ".join(str(item) for item in correct_categories.most_common(10))}')
+                      f'{" | ".join(str(item) for item in correct_categories.most_common(10))}', file=sys.stderr)
 
                 # bs, bts, bw, btw = n.eval_epoch_beam(tlg, batch_size, val_indices, beam_size)
                 # print(' BEAM VALIDATION Sentence Accuracy: {}, Word Accuracy: {}'.format(bts / bs, btw / bw))
