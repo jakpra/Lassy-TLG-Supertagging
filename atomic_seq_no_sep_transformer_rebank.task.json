@@ -3,6 +3,6 @@
   "tagset": "atomic_rebank.json",
   "decoder": "transf_seq",
   "complete": true,
-  "max_len": 64,
+  "max_len": 16,
   "no_sep": true
 }
