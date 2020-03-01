@@ -237,15 +237,16 @@ def do_everything_ccg(args, hidden_dim):
         test_indices.append(i)
         i += 1
 
-    return TLGDataset(X, Y, st.generators[0].out_to_ix), train_indices, dev_indices, test_indices, st
+    return TLGDataset(X, Y, st.generators[0].out_to_ix, st.span_encoder.pad_token_id), train_indices, dev_indices, test_indices, st
 
 
 class TLGDataset(Dataset):
-    def __init__(self, X: Sequence[Tensor], Y: Sequence[Tensor], type_to_int: Dict[Any, int]) -> None:
+    def __init__(self, X: Sequence[Tensor], Y: Sequence[Tensor], type_to_int: Dict[Any, int], x_pad_token) -> None:
         super(TLGDataset, self).__init__()
         self.X = X
         self.Y = Y
         self.type_dict = type_to_int
+        self.x_pad_token = x_pad_token
 
     def __len__(self) -> int:
         return len(self.X)

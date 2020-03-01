@@ -79,7 +79,7 @@ class Supertagger(nn.Module):
             batch_y = dataset.Y[permutation[i]]
 
             # lens = list(map(len, batch_x))
-            lens = torch.sum((batch_x.word != dataset.type_dict[PAD]).long(), dim=1).to(self.device)
+            lens = torch.sum((batch_x.word != dataset.x_pad_token).long(), dim=1).to(self.device)
 
             # batch_x = pad_sequence(batch_x, batch_first=True).to(self.device)
             # batch_y = pad_sequence(batch_y, batch_first=True).long().to(self.device)
@@ -89,7 +89,7 @@ class Supertagger(nn.Module):
             for i, l in enumerate(lens):
                 encoder_mask[i, :, l::] = 0
             encoder_mask = encoder_mask.to(self.device)
-            decoder_mask = Mask((batch_x.shape[0], batch_y.shape[1], batch_y.shape[1])).to(self.device)
+            decoder_mask = Mask((batch_x.shape[0], batch_y.shape[1], batch_y.shape[1])).to(self.device)  # does this have to be t()?
 
             batch_p = self.forward(batch_x, batch_e, encoder_mask, decoder_mask)
 
@@ -138,10 +138,11 @@ class Supertagger(nn.Module):
                 # batch_x = [dataset.X[permutation[i]] for i in range(batch_start, batch_end)]
                 # batch_y = [dataset.Y[permutation[i]] for i in range(batch_start, batch_end)]
                 batch_x = dataset.X[permutation[i]]
-                batch_y = dataset.Y[permutation[i]]
+                batch_y = dataset.Y[permutation[i]].long().to(self.device)
+                # print(batch_y)
 
                 # lens = list(map(len, batch_x))
-                lens = torch.sum((batch_x.word != dataset.type_dict[PAD]).long(), dim=1).to(self.device)
+                lens = torch.sum((batch_x.word != dataset.x_pad_token).long(), dim=1).to(self.device)
 
                 # batch_x = pad_sequence(batch_x, batch_first=True).to(self.device)
                 # batch_y = pad_sequence(batch_y, batch_first=True).long().to(self.device)
@@ -150,12 +151,12 @@ class Supertagger(nn.Module):
                 for i, l in enumerate(lens):
                     encoder_mask[i, :, l::] = 0
                 encoder_mask = encoder_mask.to(self.device)
-                batch_p = self.transformer.infer(batch_x, encoder_mask, dataset.type_dict[START],
-                                                 dataset.type_dict[SEP], lens)
-                if batch_p.size(1) < batch_y.shape[1]:
-                    batch_p = torch.cat([batch_p,
-                                         torch.zeros(batch_y.shape[0], batch_y.shape[1] - batch_p.size(1), batch_p.shape[2]).to(batch_p)],
-                                        dim=1)
+                batch_p = self.transformer.infer(batch_x, encoder_mask, dataset.type_dict[START])
+                                                 # dataset.type_dict[SEP], lens)
+                # if batch_p.size(1) < batch_y.shape[1]:
+                #     batch_p = torch.cat([batch_p,
+                #                          torch.zeros(batch_p.shape[0], batch_y.shape[1] - batch_p.size(1), batch_p.shape[2]).to(batch_p)],
+                #                         dim=1)
                 batch_loss = criterion(torch.log(batch_p[:, :-1]).permute(0, 2, 1), batch_y[:, 1:].to(self.device))
                 loss += batch_loss.item()
                 argmaxes = batch_p[:, :-1].argmax(dim=-1)
@@ -169,7 +170,7 @@ class Supertagger(nn.Module):
                 categories_gold = gen.extract_outputs(y)
                 categories_hat = gen.extract_outputs(argmaxes)
                 for b, (sequence, sequence_gold) in enumerate(zip(categories_hat, categories_gold)):
-                    # print(sequence, sequence_gold, file=sys.stderr)
+                    # print(sequence, sequence_gold)
                     for s, cat_gold in enumerate(sequence_gold):
                         if str(cat_gold) == PAD:
                             continue
@@ -209,6 +210,50 @@ class Supertagger(nn.Module):
 
         return loss, BS, BTS, BW, BTW, BC, BTC, gold_categories, generated_categories, correct_categories
 
+    # def eval_epoch(self, dataset: TLGDataset, batch_size: int, val_indices: List[int],
+    #                criterion: Callable[[FloatTensor, LongTensor], FloatTensor]) -> Tuple[float, int, int, int, int]:
+    #     self.eval()
+    #
+    #     with torch.no_grad():
+    #
+    #         permutation = val_indices
+    #
+    #         batch_start = 0
+    #         loss = 0.
+    #         BS, BTS, BW, BTW = 0, 0, 0, 0
+    #
+    #         # while batch_start < len(permutation):
+    #         for i in range(len(permutation)):
+    #         #     batch_end = min([batch_start + batch_size, len(permutation)])
+    #
+    #             # batch_x = [dataset.X[permutation[i]] for i in range(batch_start, batch_end)]
+    #             # batch_y = [dataset.Y[permutation[i]] for i in range(batch_start, batch_end)]
+    #             batch_x = dataset.X[permutation[i]]  # .to(self.device)
+    #             batch_y = dataset.Y[permutation[i]].long().to(self.device)
+    #
+    #             # lens = list(map(len, batch_x))
+    #             lens = torch.sum((batch_x.word != dataset.x_pad_token).long(), dim=1).to(self.device)
+    #
+    #             # batch_x = pad_sequence(batch_x, batch_first=True).to(self.device)
+    #             # batch_y = pad_sequence(batch_y, batch_first=True).long().to(self.device)
+    #
+    #             encoder_mask = torch.ones(batch_y.shape[0], batch_y.shape[1], batch_x.shape[1])
+    #             for i, l in enumerate(lens):
+    #                 encoder_mask[i, :, l::] = 0
+    #             encoder_mask = encoder_mask.to(self.device)
+    #             batch_p = self.transformer.infer(batch_x, encoder_mask, dataset.type_dict[START])
+    #             batch_loss = criterion(torch.log(batch_p[:, :-1]).permute(0, 2, 1), batch_y[:, 1:])
+    #             loss += batch_loss.item()
+    #             (bs, bts), (bw, btw) = accuracy(batch_p[:, :-1].argmax(dim=-1), batch_y[:, 1:], dataset.type_dict[PAD])
+    #             BS += bs
+    #             BTS += bts
+    #             BW += bw
+    #             BTW += btw
+    #
+    #             batch_start += batch_size
+    #
+    #     return loss, BS, BTS, BW, BTW
+
     def infer_epoch(self, dataset: TLGDataset, batch_size: int, val_indices: List[int], max_len: int) \
             -> List[List[int]]:
         self.eval()
@@ -230,17 +275,19 @@ class Supertagger(nn.Module):
                 # batch_y = dataset.Y[permutation[i]]  # TODO: is truncating the output to the gold standard fair game?
 
                 # lens = list(map(len, batch_x))
-                lens = torch.sum((batch_x.word != dataset.type_dict[PAD]).long(), dim=1).to(self.device)
+                lens = torch.sum((batch_x.word != dataset.x_pad_token).long(), dim=1).to(self.device)
 
                 # batch_x = pad_sequence(batch_x, batch_first=True).to(self.device)
+
+                # print('x shape, size', batch_x.shape, batch_x.size())
 
                 encoder_mask = torch.ones(batch_x.shape[0], max_len * batch_x.shape[1], batch_x.shape[1])
                 # encoder_mask = torch.ones(batch_x.shape[0], batch_y.shape[1], batch_x.shape[1])
                 for i, l in enumerate(lens):
                     encoder_mask[i, :, l::] = 0
                 encoder_mask = encoder_mask.to(self.device)
-                batch_p = self.transformer.infer(batch_x, encoder_mask, dataset.type_dict[START],
-                                                 dataset.type_dict[SEP], lens)
+                batch_p = self.transformer.infer(batch_x, encoder_mask, dataset.type_dict[START])
+                                                 # dataset.type_dict[SEP], lens)
                 batch_p = batch_p[:, :-1].argmax(dim=-1).cpu().numpy().tolist()
                 # P.append(batch_p)
                 P.extend(batch_p)
@@ -389,81 +436,86 @@ def do_everything(tlg=None):
 
     L = FuzzyLoss(torch.nn.KLDivLoss(reduction='batchmean'), num_classes, 0.2, gen.out_to_ix[PAD])
 
-    print(model, file=sys.stderr)
+    # print(model, file=sys.stderr)
+
+    model_exists = Path(f'{args.model}.pt').is_file()
+
+    if model_exists:
+        print('Found model. Loading parameters...', file=sys.stderr)
+        with open(f'{args.model}.pt', 'rb') as f:
+            # self_dict = n.state_dict()
+            # import re
+            checkpoint = torch.load(f, map_location=args.device)
+            # for k, p in pretrained.items():
+            # TODO: I assume these are for a model that was pretrained with a different architecture (TypeLM)?
+            # k = re.sub(r'network', 'transformer.decoder', k)
+            # k = re.sub(r'mha', 'mask_mha', k)
+            # k = re.sub(r'embedding_matrix', 'transformer.embedding_matrix', k)
+            # k = re.sub(r'predictor', 'transformer.predictor', k)
+            # if k in self_dict.keys():
+            #     self_dict[k] = p
+            #     print('replaced {}'.format(k))
+            # else:
+            #     continue
+            # n.load_state_dict(self_dict)
+        model.load_state_dict(checkpoint.get('model_state_dict', checkpoint))
+        best_val = checkpoint.get('dev_acc', 0.0)
+        best_atom_val = checkpoint.get('dev_atom_acc', 0.0)
+        best_val_loss = checkpoint.get('dev_loss', None)
+        start_epoch = checkpoint.get('epoch', 0)
+
+        if 'model_state_dict' in checkpoint:
+            del checkpoint['model_state_dict']
+        else:
+            del checkpoint
+
+        print(sum(p.numel() for p in model.parameters() if p.requires_grad), ' parameters', file=sys.stderr)
+        print(sum(p.numel() for p in model.transformer.encoder.parameters() if p.requires_grad),
+              ' parameters in encoder',
+              file=sys.stderr)
+        print(sum(p.numel() for p in model.transformer.decoder.parameters() if p.requires_grad),
+              ' parameters in decoder',
+              file=sys.stderr)
+
+        print('best epoch:', start_epoch, file=sys.stderr)
+        print('best dev acc:', best_val, file=sys.stderr)
+        print('best dev atomic acc:', best_atom_val, file=sys.stderr)
+        print('best dev loss:', best_val_loss, file=sys.stderr)
+
+        loss, bs, bts, bw, btw, bc, btc, gold_categories, generated_categories, correct_categories = model.eval_epoch(tlg, batch_size, val_indices, gen, L)
+        cat_acc = btc / bc
+        print('Epoch {}'.format(start_epoch), file=sys.stderr)
+        print(' VALIDATION Loss: {}, Sentence Accuracy: {}, Atomic Accuracy: {}, Category Accuracy: {}'.format(
+            loss, bts / bs, btw / bw, cat_acc), file=sys.stderr)
+
+        print(f'most common gold categories (out of {bc} in dev): '
+              f'{" | ".join(str(item) for item in gold_categories.most_common(10))}', file=sys.stderr)
+        print(f'most common generated categories (out of {bc} in dev): '
+              f'{" | ".join(str(item) for item in generated_categories.most_common(10))}', file=sys.stderr)
+        print(f'most common correct categories (out of {bc} in dev): '
+              f'{" | ".join(str(item) for item in correct_categories.most_common(10))}', file=sys.stderr)
+
+    else:
+        best_val = 0.0
+        best_val_loss = None
+        start_epoch = 0
+
+        print(sum(p.numel() for p in model.parameters() if p.requires_grad), ' parameters', file=sys.stderr)
+        print(sum(p.numel() for p in model.transformer.encoder.parameters() if p.requires_grad),
+              ' parameters in encoder',
+              file=sys.stderr)
+        print(sum(p.numel() for p in model.transformer.decoder.parameters() if p.requires_grad),
+              ' parameters in decoder',
+              file=sys.stderr)
 
     if args.mode == Mode.train:
         epochs = args.epochs
         # TODO: does reloading work at all with the LRScheduler?
-        model_exists = Path(f'{args.model}.pt').is_file()
+
         if model_exists:
-            print('Found model. Loading parameters...', file=sys.stderr)
-            with open(f'{args.model}.pt', 'rb') as f:
-                # self_dict = n.state_dict()
-                # import re
-                checkpoint = torch.load(f, map_location=args.device)
-                # for k, p in pretrained.items():
-                    # TODO: I assume these are for a model that was pretrained with a different architecture (TypeLM)?
-                    # k = re.sub(r'network', 'transformer.decoder', k)
-                    # k = re.sub(r'mha', 'mask_mha', k)
-                    # k = re.sub(r'embedding_matrix', 'transformer.embedding_matrix', k)
-                    # k = re.sub(r'predictor', 'transformer.predictor', k)
-                    # if k in self_dict.keys():
-                    #     self_dict[k] = p
-                    #     print('replaced {}'.format(k))
-                    # else:
-                    #     continue
-                # n.load_state_dict(self_dict)
-            model.load_state_dict(checkpoint.get('model_state_dict', checkpoint))
-            best_val = checkpoint.get('dev_acc', 0.0)
-            best_atom_val = checkpoint.get('dev_atom_acc', 0.0)
-            best_val_loss = checkpoint.get('dev_loss', None)
-            start_epoch = checkpoint.get('epoch', 0)
-
-            if 'model_state_dict' in checkpoint:
-                del checkpoint['model_state_dict']
-            else:
-                del checkpoint
-
-            print(sum(p.numel() for p in model.parameters() if p.requires_grad), ' parameters', file=sys.stderr)
-            print(sum(p.numel() for p in model.transformer.encoder.parameters() if p.requires_grad), ' parameters in encoder',
-                  file=sys.stderr)
-            print(sum(p.numel() for p in model.transformer.decoder.parameters() if p.requires_grad), ' parameters in decoder',
-                  file=sys.stderr)
-
-            print('best epoch:', start_epoch, file=sys.stderr)
-            print('best dev acc:', best_val, file=sys.stderr)
-            print('best dev atomic acc:', best_atom_val, file=sys.stderr)
-            print('best dev loss:', best_val_loss, file=sys.stderr)
-
             print('Resuming training...', file=sys.stderr)
-
-            loss, bs, bts, bw, btw, bc, btc, gold_categories, generated_categories, correct_categories = \
-                model.eval_epoch(tlg, batch_size, val_indices, gen, L)
-            cat_acc = btc / bc
-            print('Epoch {}'.format(start_epoch), file=sys.stderr)
-            print(' VALIDATION Loss: {}, Sentence Accuracy: {}, Atomic Accuracy: {}, Category Accuracy: {}'.format(
-                loss, bts / bs, btw / bw, cat_acc), file=sys.stderr)
-
-            print(f'most common gold categories (out of {bc} in dev): '
-                  f'{" | ".join(str(item) for item in gold_categories.most_common(10))}', file=sys.stderr)
-            print(f'most common generated categories (out of {bc} in dev): '
-                  f'{" | ".join(str(item) for item in generated_categories.most_common(10))}', file=sys.stderr)
-            print(f'most common correct categories (out of {bc} in dev): '
-                  f'{" | ".join(str(item) for item in correct_categories.most_common(10))}', file=sys.stderr)
-
         else:
             print('Model not found. Starting from scratch...', file=sys.stderr)
-            best_val = 0.0
-            best_val_loss = None
-            start_epoch = 0
-
-            print(sum(p.numel() for p in model.parameters() if p.requires_grad), ' parameters', file=sys.stderr)
-            print(sum(p.numel() for p in model.transformer.encoder.parameters() if p.requires_grad),
-                  ' parameters in encoder',
-                  file=sys.stderr)
-            print(sum(p.numel() for p in model.transformer.decoder.parameters() if p.requires_grad),
-                  ' parameters in decoder',
-                  file=sys.stderr)
 
         assert(all(list(map(lambda x: x.requires_grad, model.parameters()))))
 
@@ -490,9 +542,10 @@ def do_everything(tlg=None):
             print(' Loss: {}, Sentence Accuracy: {}, Atomic Accuracy: {}'.format(loss, bts/bs, btw/bw), file=sys.stderr)
             # if i % 5 == 0 and i != 0:
             if i % args.n_print == args.n_print - 1 and i != 0:
-                loss, bs, bts, bw, btw, bc, btc, gold_categories, generated_categories, correct_categories = \
-                    model.eval_epoch(tlg, batch_size, val_indices, gen, L)
-                cat_acc = btc/bc
+                loss, bs, bts, bw, btw, bc, btc, gold_categories, generated_categories, correct_categories = model.eval_epoch(
+                    tlg, batch_size, val_indices, gen, L)
+                cat_acc = btc / bc
+                print('Epoch {}'.format(start_epoch), file=sys.stderr)
                 print(' VALIDATION Loss: {}, Sentence Accuracy: {}, Atomic Accuracy: {}, Category Accuracy: {}'.format(
                     loss, bts / bs, btw / bw, cat_acc), file=sys.stderr)
 
@@ -592,9 +645,9 @@ def do_everything(tlg=None):
             gold_lex = deriv.get_lexical()
             deriv_hat = Derivation.from_lexical(tags, gold_lex)
             evl.add(deriv_hat, deriv)
-            with open(args.out, 'a', newline='\n') as f:
-                f.write(f'ID={ID} PARSER={args.tasks[0]} NUMPARSE=1\n')
-                f.write(f'{deriv_hat}\n')
+            # with open(args.out, 'a', newline='\n') as f:
+            #     f.write(f'ID={ID} PARSER={args.tasks[0]} NUMPARSE=1\n')
+            #     f.write(f'{deriv_hat}\n')
         ds.close()
 
     evl.eval_supertags()

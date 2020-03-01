@@ -5,7 +5,7 @@ from setuptools import setup
 
 setup(
     name='Lassy-TLG-Supertagging',
-    version='0.0.0',
+    version='0.0.0a',
     # install_requires=requirements,
     packages=['src'],
     url='',
