@@ -20,6 +20,11 @@ FloatTensor = Union[torch.cuda.FloatTensor, torch.FloatTensor]
 LongTensor = Union[torch.cuda.LongTensor, torch.LongTensor]
 
 
+PAD = '<PADDING>'
+START = '<START>'
+SEP = '<SEP>'
+
+
 def accuracy(predictions: LongTensor, truth: LongTensor, ignore_idx: int) -> Tuple[Tuple[int, int], Tuple[int, int]]:
     correct_words = torch.ones(predictions.size())
     correct_words[predictions != truth] = 0
@@ -37,13 +42,14 @@ def accuracy(predictions: LongTensor, truth: LongTensor, ignore_idx: int) -> Tup
 
 class Supertagger(nn.Module):
     def __init__(self, num_classes: int, encoder_heads: int, decoder_heads: int, encoder_layers: int,
-                 decoder_layers: int, d_intermediate: int, device: str, dropout: float=0.1, d_model: int = 300) -> None:
+                 decoder_layers: int, d_intermediate: int, device: str, dropout: float=0.1, d_model: int = 300,
+                 padding_index=0) -> None:
         super(Supertagger, self).__init__()
         self.num_classes = num_classes
         self.transformer = Transformer(num_classes=num_classes, encoder_heads=encoder_heads,
                                        decoder_heads=decoder_heads, encoder_layers=encoder_layers,
                                        decoder_layers=decoder_layers, d_model=d_model, d_intermediate=d_intermediate,
-                                       dropout=dropout, device=device, reuse_embedding=True)
+                                       dropout=dropout, device=device, reuse_embedding=True, padding_index=padding_index)
         self.device = device
 
     def forward(self, encoder_input: FloatTensor, decoder_input: FloatTensor, encoder_mask: LongTensor,
@@ -97,8 +103,8 @@ class Supertagger(nn.Module):
             # print('post argmaxes', argmaxes.size(), argmaxes[0])
             # print('post y', y.size(), y[0])
 
-            (bs, bts), (bw, btw) = accuracy(argmaxes, y, dataset.type_dict['<PADDING>'])
-            # (bs, bts), (bw, btw) = accuracy(batch_p[:, :-1].argmax(dim=-1), batch_y[:, 1:], dataset.type_dict['<PADDING>'])
+            (bs, bts), (bw, btw) = accuracy(argmaxes, y, dataset.type_dict[PAD])
+            # (bs, bts), (bw, btw) = accuracy(batch_p[:, :-1].argmax(dim=-1), batch_y[:, 1:], dataset.type_dict[PAD])
             BS += bs
             BTS += bts
             BW += bw
@@ -118,8 +124,8 @@ class Supertagger(nn.Module):
 
             batch_start = 0
             loss = 0.
-            BS, BTS, BW, BTW = 0, 0, 0, 0
-            n_words = 0
+            BS, BTS, BW, BTW, BC, BTC = 0, 0, 0, 0, 0, 0
+            # n_words = 0
 
             gold_categories, generated_categories, correct_categories = Counter(), Counter(), Counter()
 
@@ -132,7 +138,8 @@ class Supertagger(nn.Module):
                 batch_x = dataset.X[permutation[i]]
                 batch_y = dataset.Y[permutation[i]]
 
-                lens = list(map(len, batch_x))
+                # lens = list(map(len, batch_x))
+                lens = torch.sum((batch_x.word != dataset.type_dict[PAD]).long(), dim=1)
 
                 # batch_x = pad_sequence(batch_x, batch_first=True).to(self.device)
                 # batch_y = pad_sequence(batch_y, batch_first=True).long().to(self.device)
@@ -141,12 +148,12 @@ class Supertagger(nn.Module):
                 for i, l in enumerate(lens):
                     encoder_mask[i, :, l::] = 0
                 encoder_mask = encoder_mask.to(self.device)
-                batch_p = self.transformer.infer(batch_x, encoder_mask, dataset.type_dict['<SEP>'])
+                batch_p = self.transformer.infer(batch_x, encoder_mask, dataset.type_dict[START])
                 batch_loss = criterion(torch.log(batch_p[:, :-1]).permute(0, 2, 1), batch_y[:, 1:])
                 loss += batch_loss.item()
                 argmaxes = batch_p[:, :-1].argmax(dim=-1)
                 y = batch_y[:, 1:]
-                (bs, bts), (bw, btw) = accuracy(argmaxes, y, dataset.type_dict['<PADDING>'])
+                (bs, bts), (bw, btw) = accuracy(argmaxes, y, dataset.type_dict[PAD])
                 BS += bs
                 BTS += bts
                 BW += bw
@@ -156,8 +163,12 @@ class Supertagger(nn.Module):
                 categories_hat = gen.extract_outputs(argmaxes)
                 for b, (sequence, sequence_gold) in enumerate(zip(categories_hat, categories_gold)):
                     # print(sequence, sequence_gold, file=sys.stderr)
-                    for s, (cat, cat_gold) in enumerate(zip(sequence, sequence_gold)):
-                        n_words += 1
+                    for s, cat_gold in enumerate(sequence_gold):
+                        if str(cat_gold) == PAD:
+                            continue
+                        cat = sequence[s] if s < len(sequence) else None
+                        BC += 1
+                        correct = False
                         # correct_index = [b, s] in correct_indices
                         # assert (cat == cat_gold) == (correct_index), (
                         #     b, s, cat, cat_gold, argmaxes[b, s], mask[b, s], y[b, s],
@@ -166,7 +177,9 @@ class Supertagger(nn.Module):
                             cat = 'None'
                         else:
                             msg = cat.validate()
-                            if msg != 0:
+                            if msg == 0:
+                                correct = cat_gold.equals(cat)
+                            else:
                                 if hasattr(gen, 'max_depth') and cat.depth() >= gen.max_depth:
                                     msg = 'Max depth reached'
                                     # print(b, s, msg, str(cat), cat.s_expr())
@@ -181,12 +194,13 @@ class Supertagger(nn.Module):
                                     cat = msg[0]
                         gold_categories[str(cat_gold)] += 1
                         generated_categories[str(cat)] += 1
-                        # if correct_index:
-                        #     correct_categories[str(cat)] += 1
+                        if correct:
+                            BTC += 1
+                            correct_categories[str(cat)] += 1
 
                 # batch_start += batch_size
 
-        return loss, BS, BTS, BW, BTW, gold_categories, generated_categories, n_words
+        return loss, BS, BTS, BW, BTW, BC, BTC, gold_categories, generated_categories, correct_categories
 
     def infer_epoch(self, dataset: TLGDataset, batch_size: int, val_indices: List[int], max_len: int) \
             -> List[List[int]]:
@@ -206,18 +220,23 @@ class Supertagger(nn.Module):
 
                 # batch_x = [dataset.X[permutation[i]] for i in range(batch_start, batch_end)]
                 batch_x = dataset.X[permutation[i]]
+                # batch_y = dataset.Y[permutation[i]]  # TODO: is truncating the output to the gold standard fair game?
 
-                lens = list(map(len, batch_x))
+                # lens = list(map(len, batch_x))
+                lens = torch.sum((batch_x.word != dataset.type_dict[PAD]).long(), dim=1)
 
                 # batch_x = pad_sequence(batch_x, batch_first=True).to(self.device)
 
                 encoder_mask = torch.ones(batch_x.shape[0], max_len * batch_x.shape[1], batch_x.shape[1])
+                # encoder_mask = torch.ones(batch_x.shape[0], batch_y.shape[1], batch_x.shape[1])
                 for i, l in enumerate(lens):
                     encoder_mask[i, :, l::] = 0
                 encoder_mask = encoder_mask.to(self.device)
-                batch_p = self.transformer.infer(batch_x, encoder_mask, dataset.type_dict['<SEP>'])
+                batch_p = self.transformer.infer(batch_x, encoder_mask, dataset.type_dict[START],
+                                                 dataset.type_dict[SEP], lens)
                 batch_p = batch_p[:, :-1].argmax(dim=-1).cpu().numpy().tolist()
-                P.append(batch_p)
+                # P.append(batch_p)
+                P.extend(batch_p)
                 # batch_start += batch_size
 
         return P
@@ -251,11 +270,11 @@ class Supertagger(nn.Module):
                     l = l - 1
                     encoder_mask[i, :, l::] = 0
                 encoder_mask = encoder_mask.to(self.device)
-                paths, scores = self.transformer.vectorized_beam_search(batch_x, encoder_mask, dataset.type_dict['<SEP>'],
+                paths, scores = self.transformer.vectorized_beam_search(batch_x, encoder_mask, dataset.type_dict[START],
                                                                         beam_width=beam_width)
                 # todo: placeholder--take best beam as the only beam
                 batch_p = paths[0]
-                (bs, bts), (bw, btw) = accuracy(batch_p, batch_y[:, 1:], dataset.type_dict['<PADDING>'])
+                (bs, bts), (bw, btw) = accuracy(batch_p, batch_y[:, 1:], dataset.type_dict[PAD])
                 BS += bs
                 BTS += bts
                 BW += bw
@@ -297,15 +316,28 @@ def bpe_ft():
 
 
 def do_everything(tlg=None):
+    import sys
+    from pathlib import Path
     from Transformers.utils import EncoderInput
 
+    from ccg.parser.evaluation.evaluation import Evaluator
+    from ccg.util.reader import AUTODerivationsReader, ASTDerivationsReader, StaggedDerivationsReader
+    from ccg.representation.category import Category
+    from ccg.representation.derivation import Derivation
+    from ccg.util.mode import Mode
     import ccg.util.argparse as ap
 
     args = ap.main()
+
+    torch.manual_seed(args.seed)
+    np.random.seed(args.seed)
+
     if args.cuda and torch.nn.cuda.is_available():
         args.device = 'cuda'
     else:
         args.device = 'cpu'
+
+    print('Device selected:', args.device, file=sys.stderr)
 
     # pretrained_path = 'type_LM'
     #
@@ -314,7 +346,6 @@ def do_everything(tlg=None):
     d_model = args.hidden_dims[0] if args.hidden_dims else 768
     dropout = args.dropout[0] if args.dropout else 0.2
     batch_size = args.batch_size
-    epochs = args.epochs
     beam_size = 3
 
     # 3,4,4,128,0.1,0.1,4000
@@ -325,11 +356,16 @@ def do_everything(tlg=None):
         # tlg = dataprep.do_everything()
         tlg, train_indices, val_indices, test_indices, st = dataprep.do_everything_ccg(args, d_model)
 
-    num_classes = len(tlg.type_dict) + 1
-    print('Training on {} classes'.format(len(tlg.type_dict)))
+    gen = st.generators[0]
+
+    # num_classes = len(tlg.type_dict) + 1
+    num_classes = gen.output_dim + 1
+    # print('Training on {} classes'.format(len(tlg.type_dict)))
+    print('Training on {} classes'.format(gen.output_dim))
     # n = Supertagger(num_classes, 4, 3, 3, 600, dropout=0.2, device='cuda', d_model=d_model)
-    n = Supertagger(num_classes, encoder_heads=3, decoder_heads=8, encoder_layers=1,
-                    decoder_layers=2, d_intermediate=d_model, device=args.device, dropout=dropout, d_model=d_model)
+    model = Supertagger(num_classes + 1, encoder_heads=3, decoder_heads=8, encoder_layers=1,
+                    decoder_layers=2, d_intermediate=d_model, device=args.device, dropout=dropout, d_model=d_model,
+                    padding_index=gen.out_to_ix[PAD])
 
     class EncoderWrapper(nn.Module):
         def __init__(self, enc):
@@ -340,64 +376,201 @@ def do_everything(tlg=None):
             return EncoderInput(encoder_input=self.encoder(vars(x.encoder_input), word_mask=x.mask, device=args.device)[0],
                                 mask=x.mask)
 
-    n.transformer.encoder = EncoderWrapper(st.span_encoder)
+    model.transformer.encoder = EncoderWrapper(st.span_encoder)
 
-    if args.model_exists:
-        with open(args.model, 'rb') as f:
-            self_dict = n.state_dict()
-            import re
-            pretrained = torch.load(f)
-            for k, p in pretrained.items():
-                k = re.sub(r'network', 'transformer.decoder', k)
-                k = re.sub(r'mha', 'mask_mha', k)
-                k = re.sub(r'embedding_matrix', 'transformer.embedding_matrix', k)
-                k = re.sub(r'predictor', 'transformer.predictor', k)
-                if k in self_dict.keys():
-                    self_dict[k] = p
-                    print('replaced {}'.format(k))
-                else:
-                    continue
-            n.load_state_dict(self_dict)
-            del pretrained
-    assert(all(list(map(lambda x: x.requires_grad, n.parameters()))))
+    print(model, file=sys.stderr)
 
-    L = FuzzyLoss(torch.nn.KLDivLoss(reduction='batchmean'), num_classes, 0.1)
+    if args.mode == Mode.train:
+        epochs = args.epochs
+        # TODO: does reloading work at all with the LRScheduler?
+        model_exists = Path(f'{args.model}.pt').is_file()
+        if model_exists:
+            print('Found model. Loading parameters...', file=sys.stderr)
+            with open(f'{args.model}.pt', 'rb') as f:
+                # self_dict = n.state_dict()
+                # import re
+                checkpoint = torch.load(f)
+                # for k, p in pretrained.items():
+                    # TODO: I assume these are for a model that was pretrained with a different architecture (TypeLM)?
+                    # k = re.sub(r'network', 'transformer.decoder', k)
+                    # k = re.sub(r'mha', 'mask_mha', k)
+                    # k = re.sub(r'embedding_matrix', 'transformer.embedding_matrix', k)
+                    # k = re.sub(r'predictor', 'transformer.predictor', k)
+                    # if k in self_dict.keys():
+                    #     self_dict[k] = p
+                    #     print('replaced {}'.format(k))
+                    # else:
+                    #     continue
+                # n.load_state_dict(self_dict)
+            model.load_state_dict(checkpoint.get('model_state_dict', checkpoint))
+            best_val = checkpoint.get('dev_acc', 0.0)
+            best_val_loss = checkpoint.get('dev_loss', None)
+            start_epoch = checkpoint.get('epoch', 0)
 
-    a = optim.Adam(n.parameters(), betas=(0.9, 0.98), eps=1e-09, weight_decay=1e-04)
+            if 'model_state_dict' in checkpoint:
+                del checkpoint['model_state_dict']
+            else:
+                del checkpoint
 
-    def var_rate(rate):
-        return lambda _step, d_model, warmup_steps, batch_size=2048: \
-            noam_scheme(_step=_step, d_model=d_model, warmup_steps=warmup_steps, batch_size=rate*batch_size)
+            print(sum(p.numel() for p in model.parameters() if p.requires_grad), ' parameters', file=sys.stderr)
+            print(sum(p.numel() for p in model.transformer.encoder.parameters() if p.requires_grad), ' parameters in encoder',
+                  file=sys.stderr)
+            print(sum(p.numel() for p in model.transformer.decoder.parameters() if p.requires_grad), ' parameters in decoder',
+                  file=sys.stderr)
 
-    o = CustomLRScheduler(a, [noam_scheme], d_model=d_model, warmup_steps=4000, batch_size=4*batch_size)
+            print('best epoch:', start_epoch, file=sys.stderr)
+            print('best dev acc:', best_val, file=sys.stderr)
+            print('best dev loss:', best_val_loss, file=sys.stderr)
 
-    # with open(split_path, 'rb') as f:
-    #     train_indices, val_indices, test_indices = pickle.load(f)
+            print('Resuming training...', file=sys.stderr)
+        else:
+            print('Model not found. Starting from scratch...', file=sys.stderr)
+            best_val = 0.0
+            best_val_loss = None
+            start_epoch = 0
 
-    best_val = 0.5
+            print(sum(p.numel() for p in model.parameters() if p.requires_grad), ' parameters', file=sys.stderr)
+            print(sum(p.numel() for p in model.transformer.encoder.parameters() if p.requires_grad),
+                  ' parameters in encoder',
+                  file=sys.stderr)
+            print(sum(p.numel() for p in model.transformer.decoder.parameters() if p.requires_grad),
+                  ' parameters in decoder',
+                  file=sys.stderr)
 
-    for i in range(1000):
-        loss, bs, bts, bw, btw = n.train_epoch(tlg, batch_size, L, o, train_indices)
-        print('Epoch {}'.format(i))
-        print(' Loss: {}, Sentence Accuracy: {}, Word Accuracy: {}'.format(loss, bts/bs, btw/bw))
-        if i % 5 == 0 and i != 0:
-            loss, bs, bts, bw, btw, gold_categories, generated_categories, n_words = \
-                n.eval_epoch(tlg, batch_size, val_indices, st.generators[0], L)
-            print(' VALIDATION Loss: {}, Sentence Accuracy: {}, Word Accuracy: {}'.format(loss, bts / bs, btw / bw))
+        assert(all(list(map(lambda x: x.requires_grad, model.parameters()))))
 
-            print(f'most common gold categories (out of {n_words} in dev): '
-                  f'{" | ".join(str(item) for item in gold_categories.most_common(10))}')
-            print(f'most common generated categories (out of {n_words} in dev): '
-                  f'{" | ".join(str(item) for item in generated_categories.most_common(10))}')
-            # print(f'most common correct categories (out of {n_words} in dev): '
-            #       f'{" | ".join(str(item) for item in correct_categories.most_common(10))}')
+        L = FuzzyLoss(torch.nn.KLDivLoss(reduction='batchmean'), num_classes, 0.2, gen.out_to_ix[PAD])
 
-            bs, bts, bw, btw = n.eval_epoch_beam(tlg, batch_size, val_indices, beam_size)
-            print(' BEAM VALIDATION Sentence Accuracy: {}, Word Accuracy: {}'.format(bts / bs, btw / bw))
-            if bts/bs > best_val:
-                best_val = bts/bs
-                with open('model_{}_{}.p'.format(i, bts/bs), 'wb') as f:
-                    torch.save(n.state_dict(), f)
+        param_groups = [{'params': model.transformer.decoder.parameters(), 'lr': args.learning_rate}]
+        if args.span_encoder in ('bert', 'roberta', 'albert'):
+            param_groups.append({'params': model.transformer.encoder.parameters(), 'lr': 1e-5})
+
+        a = optim.AdamW(param_groups, betas=(0.9, 0.98), eps=1e-09, weight_decay=1e-04)
+
+        def var_rate(rate):
+            return lambda _step, d_model, warmup_steps, batch_size=2048: \
+                noam_scheme(_step=_step, d_model=d_model, warmup_steps=warmup_steps, batch_size=rate*batch_size)
+
+        o = CustomLRScheduler(a, [noam_scheme, noam_scheme], d_model=d_model, warmup_steps=4000, batch_size=4*batch_size)
+
+        # with open(split_path, 'rb') as f:
+        #     train_indices, val_indices, test_indices = pickle.load(f)
+
+        # best_val = 0.5
+
+        for i in range(start_epoch, start_epoch+epochs):
+            loss, bs, bts, bw, btw = model.train_epoch(tlg, batch_size, L, o, train_indices)
+            print('Epoch {}'.format(i))
+            print(' Loss: {}, Sentence Accuracy: {}, Atomic Accuracy: {}'.format(loss, bts/bs, btw/bw))
+            # if i % 5 == 0 and i != 0:
+            if i % args.n_print == args.n_print - 1 and i != 0:
+                loss, bs, bts, bw, btw, bc, btc, gold_categories, generated_categories, correct_categories = \
+                    model.eval_epoch(tlg, batch_size, val_indices, gen, L)
+                cat_acc = btc/bc
+                print(' VALIDATION Loss: {}, Sentence Accuracy: {}, Atomic Accuracy: {}, Category Accuracy: {}'.format(
+                    loss, bts / bs, btw / bw, cat_acc))
+
+                print(f'most common gold categories (out of {bc} in dev): '
+                      f'{" | ".join(str(item) for item in gold_categories.most_common(10))}')
+                print(f'most common generated categories (out of {bc} in dev): '
+                      f'{" | ".join(str(item) for item in generated_categories.most_common(10))}')
+                print(f'most common correct categories (out of {bc} in dev): '
+                      f'{" | ".join(str(item) for item in correct_categories.most_common(10))}')
+
+                # bs, bts, bw, btw = n.eval_epoch_beam(tlg, batch_size, val_indices, beam_size)
+                # print(' BEAM VALIDATION Sentence Accuracy: {}, Word Accuracy: {}'.format(bts / bs, btw / bw))
+                # if bts/bs > best_val:
+                #     best_val = bts/bs
+                if cat_acc > best_val or cat_acc == best_val and (best_val_loss is None or loss < best_val_loss):
+                    best_val_loss = loss
+                    best_epoch = i + 1
+                    best_val = cat_acc
+                    checkpoint = {'model_state_dict': model.state_dict(),
+                                  'epoch': best_epoch,
+                                  'dec_acc': best_val,
+                                  'dev_loss': best_val_loss
+                                  }
+                    # with open('model_{}_{}.pt'.format(i, btw/bw), 'wb') as f:
+                    with open(f'{args.model}.pt', 'wb') as f:
+                        torch.save(checkpoint, f)
+
+    print('Found model. Loading parameters...', file=sys.stderr)
+    with open(f'{args.model}.pt', 'rb') as f:
+        checkpoint = torch.load(f)
+    model.load_state_dict(checkpoint.get('model_state_dict', checkpoint))
+
+    best_val = checkpoint.get('dev_acc', 0.0)
+    best_val_loss = checkpoint.get('dev_loss', None)
+    start_epoch = checkpoint.get('epoch', 0)
+
+    if 'model_state_dict' in checkpoint:
+        del checkpoint['model_state_dict']
+    else:
+        del checkpoint
+
+    print(sum(p.numel() for p in model.parameters() if p.requires_grad), ' parameters', file=sys.stderr)
+    print(sum(p.numel() for p in model.transformer.encoder.parameters() if p.requires_grad), ' parameters in encoder',
+          file=sys.stderr)
+    print(sum(p.numel() for p in model.transformer.decoder.parameters() if p.requires_grad), ' parameters in decoder',
+          file=sys.stderr)
+
+    print('best epoch:', start_epoch, file=sys.stderr)
+    print('best dev acc:', best_val, file=sys.stderr)
+    print('best dev loss:', best_val_loss, file=sys.stderr)
+
+    argmaxes = model.infer_epoch(tlg, batch_size, test_indices, gen.max_len + 1)  # max_len argument is per-word, not for whole sequence!!!
+    cats = gen.extract_outputs(argmaxes)
+        # running_test_acc += correct_bool.float().mean(dim=[0, 1]).item()
+
+    # dev_acc = running_test_acc / len(testloader)
+    evl = Evaluator(args.training_files, max_depth=6)
+
+    cats = iter(cats)
+
+    testing_format = args.testing_format or args.format
+    if testing_format == 'ast':
+        dr = ASTDerivationsReader
+    elif testing_format == 'stagged':
+        dr = StaggedDerivationsReader
+    else:
+        dr = AUTODerivationsReader
+
+    if args.out is None:
+        if args.oracle_scoring:
+            args.out = 'oracle.auto'
+        else:
+            args.out = f'{args.model}.auto'
+
+    with open(args.out, 'w') as f:
+        pass
+
+    for filename in args.testing_files:
+        ds = dr(filename)
+        while True:
+            try:
+                deriv = ds.next()
+            except StopIteration:
+                break
+            try:
+                tags = next(cats)
+            except StopIteration:
+                break
+            deriv, ID = deriv['DERIVATION'], deriv['ID']
+            if len(tags) != len(deriv.sentence):
+                # print(f'words {len(deriv.sentence)}  tags {len(tags)}', file=sys.stderr)
+                # print(f'{deriv.sentence}\n{tags}', file=sys.stderr)
+                # print('\n'.join([f'{w}\t{t}' for w, t in zip(tags, deriv.sentence)]), file=sys.stderr)
+                # assert len(tags) == len(deriv.sentence)
+                tags.extend(len(deriv.sentence) * [Category(PAD)])
+            gold_lex = deriv.get_lexical()
+            deriv_hat = Derivation.from_lexical(tags, gold_lex)
+            evl.add(deriv_hat, deriv)
+            with open(args.out, 'a', newline='\n') as f:
+                f.write(f'ID={ID} PARSER={args.tasks[0]} NUMPARSE=1\n')
+                f.write(f'{deriv_hat}\n')
+        ds.close()
+
+    evl.eval_supertags()
 
 
 if __name__ == '__main__':

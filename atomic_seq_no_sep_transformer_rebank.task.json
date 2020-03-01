@@ -4,5 +4,5 @@
   "decoder": "transf_seq",
   "complete": true,
   "max_len": 64,
-  "no_sep": false
+  "no_sep": true
 }
