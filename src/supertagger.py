@@ -104,7 +104,7 @@ class Supertagger(nn.Module):
             # print('post argmaxes', argmaxes.size(), argmaxes[0])
             # print('post y', y.size(), y[0])
 
-            (bs, bts), (bw, btw) = accuracy(argmaxes, y, dataset.type_dict[PAD])
+            (bs, bts), (bw, btw) = accuracy(argmaxes, y.to(self.device), dataset.type_dict[PAD])
             # (bs, bts), (bw, btw) = accuracy(batch_p[:, :-1].argmax(dim=-1), batch_y[:, 1:], dataset.type_dict[PAD])
             BS += bs
             BTS += bts
@@ -151,11 +151,11 @@ class Supertagger(nn.Module):
                 encoder_mask = encoder_mask.to(self.device)
                 batch_p = self.transformer.infer(batch_x, encoder_mask, dataset.type_dict[START],
                                                  dataset.type_dict[SEP], lens)
-                batch_loss = criterion(torch.log(batch_p[:, :-1]).permute(0, 2, 1), batch_y[:, 1:])
+                batch_loss = criterion(torch.log(batch_p[:, :-1]).permute(0, 2, 1), batch_y[:, 1:].to(self.device))
                 loss += batch_loss.item()
                 argmaxes = batch_p[:, :-1].argmax(dim=-1)
                 y = batch_y[:, 1:]
-                (bs, bts), (bw, btw) = accuracy(argmaxes, y, dataset.type_dict[PAD])
+                (bs, bts), (bw, btw) = accuracy(argmaxes, y.to(self.device), dataset.type_dict[PAD])
                 BS += bs
                 BTS += bts
                 BW += bw
