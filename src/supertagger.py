@@ -92,7 +92,7 @@ class Supertagger(nn.Module):
 
             batch_p = self.forward(batch_x, batch_e, encoder_mask, decoder_mask)
 
-            batch_loss = criterion(batch_p[:, :-1].permute(0, 2, 1), batch_y[:, 1:])
+            batch_loss = criterion(batch_p[:, :-1].permute(0, 2, 1), batch_y[:, 1:].to(self.device))
             loss += batch_loss.item()
             batch_loss.backward()
             optimizer.step()
