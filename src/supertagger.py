@@ -1,3 +1,5 @@
+import sys
+
 from Transformers.Transformer import Transformer
 from Transformers.utils import FuzzyLoss, CustomLRScheduler, noam_scheme, make_mask as Mask
 
@@ -153,10 +155,10 @@ class Supertagger(nn.Module):
                 encoder_mask = encoder_mask.to(self.device)
                 batch_p = self.transformer.infer(batch_x, encoder_mask, dataset.type_dict[START])
                                                  # dataset.type_dict[SEP], lens)
-                # if batch_p.size(1) < batch_y.shape[1]:
-                #     batch_p = torch.cat([batch_p,
-                #                          torch.zeros(batch_p.shape[0], batch_y.shape[1] - batch_p.size(1), batch_p.shape[2]).to(batch_p)],
-                #                         dim=1)
+                if batch_p.size(1) < batch_y.shape[1]:
+                    batch_p = torch.cat([batch_p,
+                                         torch.zeros(batch_p.shape[0], batch_y.shape[1] - batch_p.size(1), batch_p.shape[2]).to(batch_p)],
+                                        dim=1)
                 batch_loss = criterion(torch.log(batch_p[:, :-1]).permute(0, 2, 1), batch_y[:, 1:].to(self.device))
                 loss += batch_loss.item()
                 argmaxes = batch_p[:, :-1].argmax(dim=-1)
@@ -169,6 +171,8 @@ class Supertagger(nn.Module):
 
                 categories_gold = gen.extract_outputs(y)
                 categories_hat = gen.extract_outputs(argmaxes)
+                print('y', y[0].tolist(), file=sys.stderr)
+                print('argmaxes', argmaxes[0].tolist(), file=sys.stderr)
                 for b, (sequence, sequence_gold) in enumerate(zip(categories_hat, categories_gold)):
                     # print(sequence, sequence_gold)
                     for s, cat_gold in enumerate(sequence_gold):
@@ -191,15 +195,17 @@ class Supertagger(nn.Module):
                                 if hasattr(gen, 'max_depth') and cat.depth() >= gen.max_depth:
                                     msg = 'Max depth reached'
                                     # print(b, s, msg, str(cat), cat.s_expr())
-                                    cat = msg
-                                elif hasattr(gen, 'max_len') and argmaxes.size(1) >= gen.max_len:
-                                    msg = 'Max length reached'
+                                    # cat = msg
+                                # elif hasattr(gen, 'max_len') and argmaxes.size(1) >= gen.max_len:
+                                #     msg = 'Max length reached'
                                     # print(b, s, msg, str(cat), cat.s_expr())
-                                    cat = msg
+                                    # cat = msg
                                 else:
                                     # print(b, s, msg[0], str(cat), cat.s_expr(), file=sys.stderr)
                                     # print(argmaxes[b, s], file=sys.stderr)
-                                    cat = msg[0]
+                                    # cat = msg[0]
+                                    msg = msg[0]
+                                cat = f'{cat} ({msg})'
                         gold_categories[str(cat_gold)] += 1
                         generated_categories[str(cat)] += 1
                         if correct:
@@ -370,7 +376,6 @@ def bpe_ft():
 
 
 def do_everything(tlg=None):
-    import sys
     from pathlib import Path
     from Transformers.utils import EncoderInput
 
@@ -412,10 +417,13 @@ def do_everything(tlg=None):
 
     gen = st.generators[0]
 
+    logfile = open(f'{args.model}.log', 'w')
+
     # num_classes = len(tlg.type_dict) + 1
     num_classes = gen.output_dim + 1
     # print('Training on {} classes'.format(len(tlg.type_dict)))
     print('Training on {} classes'.format(gen.output_dim), file=sys.stderr)
+    print('Training on {} classes'.format(gen.output_dim), file=logfile)
     # n = Supertagger(num_classes, 4, 3, 3, 600, dropout=0.2, device='cuda', d_model=d_model)
     model = Supertagger(num_classes + 1, encoder_heads=3, decoder_heads=8, encoder_layers=1,
                     decoder_layers=2, d_intermediate=d_model, device=args.device, dropout=dropout, d_model=d_model,
@@ -436,7 +444,7 @@ def do_everything(tlg=None):
 
     L = FuzzyLoss(torch.nn.KLDivLoss(reduction='batchmean'), num_classes, 0.2, gen.out_to_ix[PAD])
 
-    # print(model, file=sys.stderr)
+    print(model, file=sys.stderr)
 
     model_exists = Path(f'{args.model}.pt').is_file()
 
@@ -540,12 +548,15 @@ def do_everything(tlg=None):
             loss, bs, bts, bw, btw = model.train_epoch(tlg, batch_size, L, o, train_indices)
             print('Epoch {}'.format(i+1), file=sys.stderr)
             print(' Loss: {}, Sentence Accuracy: {}, Atomic Accuracy: {}'.format(loss, bts/bs, btw/bw), file=sys.stderr)
+            print('Epoch {}'.format(i + 1), file=logfile)
+            print(' Loss: {}, Sentence Accuracy: {}, Atomic Accuracy: {}'.format(loss, bts / bs, btw / bw),
+                  file=logfile)
             # if i % 5 == 0 and i != 0:
             if i % args.n_print == args.n_print - 1 and i != 0:
                 loss, bs, bts, bw, btw, bc, btc, gold_categories, generated_categories, correct_categories = model.eval_epoch(
                     tlg, batch_size, val_indices, gen, L)
                 cat_acc = btc / bc
-                print('Epoch {}'.format(start_epoch), file=sys.stderr)
+                print('Epoch {}'.format(i+1), file=sys.stderr)
                 print(' VALIDATION Loss: {}, Sentence Accuracy: {}, Atomic Accuracy: {}, Category Accuracy: {}'.format(
                     loss, bts / bs, btw / bw, cat_acc), file=sys.stderr)
 
@@ -555,6 +566,17 @@ def do_everything(tlg=None):
                       f'{" | ".join(str(item) for item in generated_categories.most_common(10))}', file=sys.stderr)
                 print(f'most common correct categories (out of {bc} in dev): '
                       f'{" | ".join(str(item) for item in correct_categories.most_common(10))}', file=sys.stderr)
+
+                print('Epoch {}'.format(i+1), file=logfile)
+                print(' VALIDATION Loss: {}, Sentence Accuracy: {}, Atomic Accuracy: {}, Category Accuracy: {}'.format(
+                    loss, bts / bs, btw / bw, cat_acc), file=logfile)
+
+                print(f'most common gold categories (out of {bc} in dev): '
+                      f'{" | ".join(str(item) for item in gold_categories.most_common(10))}', file=logfile)
+                print(f'most common generated categories (out of {bc} in dev): '
+                      f'{" | ".join(str(item) for item in generated_categories.most_common(10))}', file=logfile)
+                print(f'most common correct categories (out of {bc} in dev): '
+                      f'{" | ".join(str(item) for item in correct_categories.most_common(10))}', file=logfile)
 
                 # bs, bts, bw, btw = n.eval_epoch_beam(tlg, batch_size, val_indices, beam_size)
                 # print(' BEAM VALIDATION Sentence Accuracy: {}, Word Accuracy: {}'.format(bts / bs, btw / bw))
@@ -573,6 +595,7 @@ def do_everything(tlg=None):
                         torch.save(checkpoint, f)
 
     print('Found model. Loading parameters...', file=sys.stderr)
+    print('Found model. Loading parameters...', file=logfile)
     with open(f'{args.model}.pt', 'rb') as f:
         checkpoint = torch.load(f, map_location=args.device)
     model.load_state_dict(checkpoint.get('model_state_dict', checkpoint))
@@ -597,6 +620,17 @@ def do_everything(tlg=None):
     print('best dev acc:', best_val, file=sys.stderr)
     print('best dev atomic acc:', best_atom_val, file=sys.stderr)
     print('best dev loss:', best_val_loss, file=sys.stderr)
+
+    print(sum(p.numel() for p in model.parameters() if p.requires_grad), ' parameters', file=logfile)
+    print(sum(p.numel() for p in model.transformer.encoder.parameters() if p.requires_grad), ' parameters in encoder',
+          file=logfile)
+    print(sum(p.numel() for p in model.transformer.decoder.parameters() if p.requires_grad), ' parameters in decoder',
+          file=logfile)
+
+    print('best epoch:', start_epoch, file=logfile)
+    print('best dev acc:', best_val, file=logfile)
+    print('best dev atomic acc:', best_atom_val, file=logfile)
+    print('best dev loss:', best_val_loss, file=logfile)
 
     argmaxes = model.infer_epoch(tlg, batch_size, test_indices, gen.max_len + 1)  # max_len argument is per-word, not for whole sequence!!!
     cats = gen.extract_outputs(argmaxes)
