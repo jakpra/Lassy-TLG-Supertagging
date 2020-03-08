@@ -188,24 +188,31 @@ class Supertagger(nn.Module):
                         if cat is None:
                             cat = 'None'
                         else:
-                            msg = cat.validate()
-                            if msg == 0:
-                                correct = cat_gold.equals(cat)
-                            else:
-                                if hasattr(gen, 'max_depth') and cat.depth() >= gen.max_depth:
-                                    msg = 'Max depth reached'
-                                    # print(b, s, msg, str(cat), cat.s_expr())
-                                    # cat = msg
-                                # elif hasattr(gen, 'max_len') and argmaxes.size(1) >= gen.max_len:
-                                #     msg = 'Max length reached'
-                                    # print(b, s, msg, str(cat), cat.s_expr())
-                                    # cat = msg
-                                else:
-                                    # print(b, s, msg[0], str(cat), cat.s_expr(), file=sys.stderr)
-                                    # print(argmaxes[b, s], file=sys.stderr)
-                                    # cat = msg[0]
-                                    msg = msg[0]
+                            try:
+                                msg = cat.validate()
+                            except RecursionError:
+                                msg = 'Maximum recursion depth reached'
                                 cat = f'{cat} ({msg})'
+                            except:
+                                raise
+                            else:
+                                if msg == 0:
+                                    correct = cat_gold.equals(cat)
+                                else:
+                                    if hasattr(gen, 'max_depth') and cat.depth() >= gen.max_depth:
+                                        msg = 'Max depth reached'
+                                        # print(b, s, msg, str(cat), cat.s_expr())
+                                        # cat = msg
+                                    # elif hasattr(gen, 'max_len') and argmaxes.size(1) >= gen.max_len:
+                                    #     msg = 'Max length reached'
+                                        # print(b, s, msg, str(cat), cat.s_expr())
+                                        # cat = msg
+                                    else:
+                                        # print(b, s, msg[0], str(cat), cat.s_expr(), file=sys.stderr)
+                                        # print(argmaxes[b, s], file=sys.stderr)
+                                        # cat = msg[0]
+                                        msg = msg[0]
+                                    cat = f'{cat} ({msg})'
                         gold_categories[str(cat_gold)] += 1
                         generated_categories[str(cat)] += 1
                         if correct:
