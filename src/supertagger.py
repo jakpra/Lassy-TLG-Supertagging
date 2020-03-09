@@ -192,7 +192,7 @@ class Supertagger(nn.Module):
                                 msg = cat.validate()
                             except RecursionError:
                                 msg = 'Maximum recursion depth reached'
-                                cat = f'{cat} ({msg})'
+                                cat = msg
                             except:
                                 raise
                             else:
