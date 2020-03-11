@@ -538,7 +538,8 @@ def do_everything(tlg=None):
         if args.span_encoder in ('bert', 'roberta', 'albert'):
             param_groups.append({'params': model.transformer.encoder.parameters(), 'lr': 1e-5})
 
-        a = optim.AdamW(param_groups, betas=(0.9, 0.98), eps=1e-09, weight_decay=1e-04)
+        # a = optim.AdamW(param_groups, betas=(0.9, 0.98), eps=1e-09, weight_decay=1e-04)
+        a = optim.AdamW(param_groups, eps=args.epsilon, weight_decay=args.decay)
 
         def var_rate(rate):
             return lambda _step, d_model, warmup_steps, batch_size=2048: \
@@ -552,7 +553,8 @@ def do_everything(tlg=None):
         # best_val = 0.5
 
         for i in range(start_epoch, start_epoch+epochs):
-            loss, bs, bts, bw, btw = model.train_epoch(tlg, batch_size, L, o, train_indices)
+            # loss, bs, bts, bw, btw = model.train_epoch(tlg, batch_size, L, o, train_indices)
+            loss, bs, bts, bw, btw = model.train_epoch(tlg, batch_size, L, a, train_indices)
             print('Epoch {}'.format(i+1), file=sys.stderr)
             print(' Loss: {}, Sentence Accuracy: {}, Atomic Accuracy: {}'.format(loss, bts/bs, btw/bw), file=sys.stderr)
             print('Epoch {}'.format(i + 1), file=logfile)
