@@ -153,7 +153,7 @@ class Supertagger(nn.Module):
                 for i, l in enumerate(lens):
                     encoder_mask[i, :, l::] = 0
                 encoder_mask = encoder_mask.to(self.device)
-                batch_p = self.transformer.infer(batch_x, encoder_mask, dataset.type_dict[SEP])  # TODO: SEP?
+                batch_p = self.transformer.infer(batch_x, encoder_mask, dataset.type_dict[START])  # TODO: SEP?
                                                  # dataset.type_dict[SEP], lens)
                 if batch_p.size(1) < batch_y.shape[1]:
                     batch_p = torch.cat([batch_p,
@@ -299,7 +299,7 @@ class Supertagger(nn.Module):
                 for i, l in enumerate(lens):
                     encoder_mask[i, :, l::] = 0
                 encoder_mask = encoder_mask.to(self.device)
-                batch_p = self.transformer.infer(batch_x, encoder_mask, dataset.type_dict[SEP])
+                batch_p = self.transformer.infer(batch_x, encoder_mask, dataset.type_dict[START])
                                                  # dataset.type_dict[SEP], lens)
                 batch_p = batch_p[:, :-1].argmax(dim=-1).cpu().numpy().tolist()
                 # P.append(batch_p)
@@ -337,7 +337,7 @@ class Supertagger(nn.Module):
                     l = l - 1
                     encoder_mask[i, :, l::] = 0
                 encoder_mask = encoder_mask.to(self.device)
-                paths, scores = self.transformer.vectorized_beam_search(batch_x, encoder_mask, dataset.type_dict[SEP],
+                paths, scores = self.transformer.vectorized_beam_search(batch_x, encoder_mask, dataset.type_dict[START],
                                                                         beam_width=beam_width)
                 # todo: placeholder--take best beam as the only beam
                 batch_p = paths[0]
