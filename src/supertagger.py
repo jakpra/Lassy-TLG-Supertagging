@@ -1,7 +1,7 @@
 import sys
 
 from Transformers.Transformer import Transformer
-from Transformers.utils import FuzzyLoss, CustomLRScheduler, noam_scheme, make_mask as Mask
+from Transformers.utils import FuzzyLoss, CustomLRScheduler, noam_scheme, make_mask as Mask, Scheduler, make_cosine_schedule
 
 import torch
 from torch import nn
@@ -536,7 +536,7 @@ def do_everything(tlg=None):
 
         param_groups = [{'params': model.transformer.decoder.parameters(), 'lr': args.learning_rate}]
         if args.span_encoder in ('bert', 'roberta', 'albert'):
-            param_groups.append({'params': model.transformer.encoder.parameters(), 'lr': 1e-5})
+            param_groups.append({'params': model.transformer.encoder.parameters(), 'lr': args.bert_learning_rate})
 
         # a = optim.AdamW(param_groups, betas=(0.9, 0.98), eps=1e-09, weight_decay=1e-04)
         a = optim.AdamW(param_groups, eps=args.epsilon, weight_decay=args.decay)
@@ -546,8 +546,12 @@ def do_everything(tlg=None):
             return lambda _step, d_model, warmup_steps, **kwargs: \
                 noam_scheme(_step=_step, d_model=d_model, warmup_steps=warmup_steps, batch_size=batch_size/rate)
 
-        o = CustomLRScheduler(a, [var_rate(args.learning_rate), var_rate(1e-5)],
-                              d_model=d_model, warmup_steps=4000, batch_size=batch_size/args.learning_rate)
+        # o = CustomLRScheduler(a, [var_rate(args.learning_rate), var_rate(args.bert_learning_rate)],
+        #                       d_model=d_model, warmup_steps=4000, batch_size=batch_size/args.learning_rate)
+
+        steps = len(tlg)*epochs
+        warmup = steps//10
+        o = Scheduler(a, make_cosine_schedule(1, warmup, steps - warmup), (args.learning_rate, args.bert_learning_rate))
 
         # with open(split_path, 'rb') as f:
         #     train_indices, val_indices, test_indices = pickle.load(f)
