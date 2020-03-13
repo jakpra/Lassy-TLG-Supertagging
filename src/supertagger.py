@@ -542,10 +542,12 @@ def do_everything(tlg=None):
         a = optim.AdamW(param_groups, eps=args.epsilon, weight_decay=args.decay)
 
         def var_rate(rate):
-            return lambda _step, d_model, warmup_steps, batch_size=2048: \
-                noam_scheme(_step=_step, d_model=d_model, warmup_steps=warmup_steps, batch_size=rate*batch_size)
+            # return lambda _step, d_model, warmup_steps, batch_size=2048: \
+            return lambda _step, d_model, warmup_steps, _: \
+                noam_scheme(_step=_step, d_model=d_model, warmup_steps=warmup_steps, batch_size=batch_size/rate)
 
-        o = CustomLRScheduler(a, [noam_scheme, noam_scheme], d_model=d_model, warmup_steps=4000, batch_size=4*batch_size)
+        o = CustomLRScheduler(a, [var_rate(args.learning_rate), var_rate(1e-5)],
+                              d_model=d_model, warmup_steps=4000, batch_size=batch_size/args.learning_rate)
 
         # with open(split_path, 'rb') as f:
         #     train_indices, val_indices, test_indices = pickle.load(f)
@@ -554,7 +556,7 @@ def do_everything(tlg=None):
 
         for i in range(start_epoch, start_epoch+epochs):
             # loss, bs, bts, bw, btw = model.train_epoch(tlg, batch_size, L, o, train_indices)
-            loss, bs, bts, bw, btw = model.train_epoch(tlg, batch_size, L, a, train_indices)
+            loss, bs, bts, bw, btw = model.train_epoch(tlg, batch_size, L, a if args.use_schedule else o, train_indices)
             print('Epoch {}'.format(i+1), file=sys.stderr)
             print(' Loss: {}, Sentence Accuracy: {}, Atomic Accuracy: {}'.format(loss, bts/bs, btw/bw), file=sys.stderr)
             print('Epoch {}'.format(i + 1), file=logfile)
