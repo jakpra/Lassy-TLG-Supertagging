@@ -556,7 +556,7 @@ def do_everything(tlg=None):
 
         for i in range(start_epoch, start_epoch+epochs):
             # loss, bs, bts, bw, btw = model.train_epoch(tlg, batch_size, L, o, train_indices)
-            loss, bs, bts, bw, btw = model.train_epoch(tlg, batch_size, L, a if args.use_schedule else o, train_indices)
+            loss, bs, bts, bw, btw = model.train_epoch(tlg, batch_size, L, o if args.use_schedule else a, train_indices)
             print('Epoch {}'.format(i+1), file=sys.stderr)
             print(' Loss: {}, Sentence Accuracy: {}, Atomic Accuracy: {}'.format(loss, bts/bs, btw/bw), file=sys.stderr)
             print('Epoch {}'.format(i + 1), file=logfile)
