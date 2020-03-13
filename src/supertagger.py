@@ -543,7 +543,7 @@ def do_everything(tlg=None):
 
         def var_rate(rate):
             # return lambda _step, d_model, warmup_steps, batch_size=2048: \
-            return lambda _step, d_model, warmup_steps, _: \
+            return lambda _step, d_model, warmup_steps, **kwargs: \
                 noam_scheme(_step=_step, d_model=d_model, warmup_steps=warmup_steps, batch_size=batch_size/rate)
 
         o = CustomLRScheduler(a, [var_rate(args.learning_rate), var_rate(1e-5)],
