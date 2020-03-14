@@ -673,6 +673,10 @@ def do_everything(tlg=None):
     with open(args.out, 'w') as f:
         pass
 
+    tab_out = f'{args.model}.tsv'
+    with open(tab_out, 'w') as f:
+        f.write(f'{args.model}\n')
+
     for filename in args.testing_files:
         ds = dr(filename)
         while True:
@@ -694,9 +698,12 @@ def do_everything(tlg=None):
             gold_lex = deriv.get_lexical()
             deriv_hat = Derivation.from_lexical(tags, gold_lex)
             evl.add(deriv_hat, deriv)
-            # with open(args.out, 'a', newline='\n') as f:
-            #     f.write(f'ID={ID} PARSER={args.tasks[0]} NUMPARSE=1\n')
-            #     f.write(f'{deriv_hat}\n')
+            with open(tab_out, 'a', newline='\n') as f:
+                for gold_dln, pred_cat in zip(gold_lex, tags):
+                    f.write(f'{pred_cat}\t{int(gold_dln.category1.equals(pred_cat))}\n')
+            with open(args.out, 'a', newline='\n') as f:
+                f.write(f'ID={ID} PARSER={args.tasks[0]} NUMPARSE=1\n')
+                f.write(f'{deriv_hat}\n')
         ds.close()
 
     evl.eval_supertags()
