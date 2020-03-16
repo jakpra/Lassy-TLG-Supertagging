@@ -72,6 +72,8 @@ class Supertagger(nn.Module):
         loss = 0.
         BS, BTS, BW, BTW = 0, 0, 0, 0
 
+        running_batch_time = 0.0
+
         # while batch_start < len(permutation):
         for i in range(len(permutation)):
             start_time = time.time()
