@@ -1,5 +1,7 @@
 import sys
 
+import time
+
 from Transformers.Transformer import Transformer
 from Transformers.utils import FuzzyLoss, CustomLRScheduler, noam_scheme, make_mask as Mask, Scheduler, make_cosine_schedule
 
@@ -61,7 +63,7 @@ class Supertagger(nn.Module):
 
     def train_epoch(self, dataset: TLGDataset, batch_size: int,
                     criterion: Callable[[FloatTensor, LongTensor], FloatTensor],
-                    optimizer: optim.Optimizer, train_indices: List[int]) -> Tuple[float, int, int, int, int]:
+                    optimizer: optim.Optimizer, train_indices: List[int], n_print=100, epoch=0) -> Tuple[float, int, int, int, int]:
         self.train()
 
         permutation = np.random.permutation(train_indices)
@@ -72,6 +74,7 @@ class Supertagger(nn.Module):
 
         # while batch_start < len(permutation):
         for i in range(len(permutation)):
+            start_time = time.time()
             optimizer.zero_grad()
             # batch_end = min([batch_start + batch_size, len(permutation)])
 
@@ -95,7 +98,7 @@ class Supertagger(nn.Module):
 
             batch_p = self.forward(batch_x, batch_e, encoder_mask, decoder_mask)
 
-            batch_loss = criterion(batch_p[:, :-1].permute(0, 2, 1), batch_y[:, 1:].to(self.device))
+            batch_loss = criterion(batch_p[:, :-1].permute(0, 2, 1), batch_y[:, 1:].to(self.device)) / lens.float().sum()
             loss += batch_loss.item()
             batch_loss.backward()
             optimizer.step()
@@ -113,6 +116,32 @@ class Supertagger(nn.Module):
             BTS += bts
             BW += bw
             BTW += btw
+
+            running_batch_time += time.time() - start_time
+
+            if i % n_print == n_print - 1:  # print every n mini-batches
+
+                batch_time = running_batch_time / n_print
+                print('[%d, %5d] loss: %.3f | acc: %.3f | %.1f %s | %.1f %s' % (epoch + 1, i + 1,
+                                                                      loss / n_print,
+                                                                      BTW / BW,
+                                                                      batch_time if batch_time >= 1 else 1 / batch_time,
+                                                                      's/batch' if batch_time >= 1 else 'batch(es)/s',
+                                                                      batch_time/batch_size if batch_time/batch_size >= 1 else batch_size/batch_time,
+                                                                      's/expl' if batch_time/batch_size >= 1 else 'expl(s)/s'),
+                      file=sys.stderr)
+                # if str(device).startswith('cuda'):
+                #     print(torch.cuda.memory_summary(abbreviated=False), file=sys.stderr)
+
+                # assist.info['batch'] = train_i + 1
+                # assist.info['batch_loss'] = running_loss / n_print
+                # assist.info['batch_acc'] = running_acc / n_print
+                # assist.info['ex_per_s'] = batch_size / batch_time
+                # assist.step()
+
+                # running_loss = 0.0
+                # running_acc = 0.0
+                running_batch_time = 0.0
 
             # batch_start += batch_size
 
@@ -424,13 +453,13 @@ def do_everything(tlg=None):
 
     gen = st.generators[0]
 
-    logfile = open(f'{args.model}.log', 'w')
+    # logfile = open(f'{args.model}.log', 'w')
 
     # num_classes = len(tlg.type_dict) + 1
     num_classes = gen.output_dim + 1
     # print('Training on {} classes'.format(len(tlg.type_dict)))
     print('Training on {} classes'.format(gen.output_dim), file=sys.stderr)
-    print('Training on {} classes'.format(gen.output_dim), file=logfile)
+    # print('Training on {} classes'.format(gen.output_dim), file=logfile)
     # n = Supertagger(num_classes, 4, 3, 3, 600, dropout=0.2, device='cuda', d_model=d_model)
     model = Supertagger(num_classes + 1, encoder_heads=3, decoder_heads=8, encoder_layers=1,
                     decoder_layers=2, d_intermediate=d_model, device=args.device, dropout=dropout, d_model=d_model,
@@ -449,7 +478,8 @@ def do_everything(tlg=None):
 
     model = model.to(args.device)
 
-    L = FuzzyLoss(torch.nn.KLDivLoss(reduction='batchmean'), num_classes, 0.2, gen.out_to_ix[PAD])
+    # L = FuzzyLoss(torch.nn.KLDivLoss(reduction='batchmean'), num_classes, 0.2, gen.out_to_ix[PAD])
+    L = torch.nn.CrossEntropyLoss(reduction='sum', ignore_index=gen.out_to_ix[PAD])
 
     print(model, file=sys.stderr)
 
@@ -497,17 +527,27 @@ def do_everything(tlg=None):
         print('best dev atomic acc:', best_atom_val, file=sys.stderr)
         print('best dev loss:', best_val_loss, file=sys.stderr)
 
-        loss, bs, bts, bw, btw, bc, btc, gold_categories, generated_categories, correct_categories = model.eval_epoch(tlg, batch_size, val_indices, gen, L)
-        cat_acc = btc / bc
-        print('Epoch {}'.format(start_epoch), file=sys.stderr)
-        print(' VALIDATION Loss: {}, Sentence Accuracy: {}, Atomic Accuracy: {}, Category Accuracy: {}'.format(
-            loss, bts / bs, btw / bw, cat_acc), file=sys.stderr)
+        dev_loss, dev_bs, dev_bts, dev_bw, dev_btw, dev_bc, dev_btc, gold_categories, generated_categories, correct_categories = model.eval_epoch(tlg, batch_size, val_indices, gen, L)
+        dev_atom_acc = dev_btw / dev_bw
+        dev_cat_acc = dev_btc / dev_bc
+        # print('Epoch {}'.format(start_epoch), file=sys.stderr)
+        # print(' VALIDATION Loss: {}, Sentence Accuracy: {}, Atomic Accuracy: {}, Category Accuracy: {}'.format(
+        #     loss, bts / bs, btw / bw, cat_acc), file=sys.stderr)
+        print(
+            '[epoch %d summary] train loss: %.3f | train atom acc: %.3f | dev loss: %.3f | dev atom acc: %.3f | dev acc: %.3f' %
+            (start_epoch,
+             0.0,
+             0.0,
+             dev_loss,
+             dev_atom_acc,
+             dev_cat_acc),
+            file=sys.stderr)
 
-        print(f'most common gold categories (out of {bc} in dev): '
+        print(f'most common gold categories (out of {dev_bc} in dev): '
               f'{" | ".join(str(item) for item in gold_categories.most_common(10))}', file=sys.stderr)
-        print(f'most common generated categories (out of {bc} in dev): '
+        print(f'most common generated categories (out of {dev_bc} in dev): '
               f'{" | ".join(str(item) for item in generated_categories.most_common(10))}', file=sys.stderr)
-        print(f'most common correct categories (out of {bc} in dev): '
+        print(f'most common correct categories (out of {dev_bc} in dev): '
               f'{" | ".join(str(item) for item in correct_categories.most_common(10))}', file=sys.stderr)
 
     else:
@@ -561,56 +601,81 @@ def do_everything(tlg=None):
         for i in range(start_epoch, start_epoch+epochs):
             # loss, bs, bts, bw, btw = model.train_epoch(tlg, batch_size, L, o, train_indices)
             loss, bs, bts, bw, btw = model.train_epoch(tlg, batch_size, L, o if args.use_schedule else a, train_indices)
-            print('Epoch {}'.format(i+1), file=sys.stderr)
-            print(' Loss: {}, Sentence Accuracy: {}, Atomic Accuracy: {}'.format(loss, bts/bs, btw/bw), file=sys.stderr)
-            print('Epoch {}'.format(i + 1), file=logfile)
-            print(' Loss: {}, Sentence Accuracy: {}, Atomic Accuracy: {}'.format(loss, bts / bs, btw / bw),
-                  file=logfile)
+            # print('Epoch {}'.format(i+1), file=sys.stderr)
+            # print(' Loss: {}, Sentence Accuracy: {}, Atomic Accuracy: {}'.format(loss, bts/bs, btw/bw), file=sys.stderr)
+            # print('Epoch {}'.format(i + 1), file=logfile)
+            # print(' Loss: {}, Sentence Accuracy: {}, Atomic Accuracy: {}'.format(loss, bts / bs, btw / bw),
+            #       file=logfile)
+            epoch_acc = btw / bw
+
             # if i % 5 == 0 and i != 0:
-            if i % args.n_print == args.n_print - 1 and i != 0:
-                loss, bs, bts, bw, btw, bc, btc, gold_categories, generated_categories, correct_categories = model.eval_epoch(
-                    tlg, batch_size, val_indices, gen, L)
-                cat_acc = btc / bc
-                print('Epoch {}'.format(i+1), file=sys.stderr)
-                print(' VALIDATION Loss: {}, Sentence Accuracy: {}, Atomic Accuracy: {}, Category Accuracy: {}'.format(
-                    loss, bts / bs, btw / bw, cat_acc), file=sys.stderr)
+            # if i % args.n_print == args.n_print - 1 and i != 0:
+            dev_loss, dev_bs, dev_bts, dev_bw, dev_btw, dev_bc, dev_btc, gold_categories, generated_categories, correct_categories = model.eval_epoch(
+                tlg, batch_size, val_indices, gen, L)
+            dev_atom_acc = dev_btw / dev_bw
+            dev_cat_acc = dev_btc / dev_bc
+            # print('Epoch {}'.format(i+1), file=sys.stderr)
+            # print(' VALIDATION Loss: {}, Sentence Accuracy: {}, Atomic Accuracy: {}, Category Accuracy: {}'.format(
+            #     loss, bts / bs, btw / bw, cat_acc), file=sys.stderr)
+            #
+            # print(f'most common gold categories (out of {bc} in dev): '
+            #       f'{" | ".join(str(item) for item in gold_categories.most_common(10))}', file=sys.stderr)
+            # print(f'most common generated categories (out of {bc} in dev): '
+            #       f'{" | ".join(str(item) for item in generated_categories.most_common(10))}', file=sys.stderr)
+            # print(f'most common correct categories (out of {bc} in dev): '
+            #       f'{" | ".join(str(item) for item in correct_categories.most_common(10))}', file=sys.stderr)
+            #
+            # print('Epoch {}'.format(i+1), file=logfile)
+            # print(' VALIDATION Loss: {}, Sentence Accuracy: {}, Atomic Accuracy: {}, Category Accuracy: {}'.format(
+            #     loss, bts / bs, btw / bw, cat_acc), file=logfile)
+            #
+            # print(f'most common gold categories (out of {bc} in dev): '
+            #       f'{" | ".join(str(item) for item in gold_categories.most_common(10))}', file=logfile)
+            # print(f'most common generated categories (out of {bc} in dev): '
+            #       f'{" | ".join(str(item) for item in generated_categories.most_common(10))}', file=logfile)
+            # print(f'most common correct categories (out of {bc} in dev): '
+            #       f'{" | ".join(str(item) for item in correct_categories.most_common(10))}', file=logfile)
 
-                print(f'most common gold categories (out of {bc} in dev): '
-                      f'{" | ".join(str(item) for item in gold_categories.most_common(10))}', file=sys.stderr)
-                print(f'most common generated categories (out of {bc} in dev): '
-                      f'{" | ".join(str(item) for item in generated_categories.most_common(10))}', file=sys.stderr)
-                print(f'most common correct categories (out of {bc} in dev): '
-                      f'{" | ".join(str(item) for item in correct_categories.most_common(10))}', file=sys.stderr)
+            # bs, bts, bw, btw = n.eval_epoch_beam(tlg, batch_size, val_indices, beam_size)
+            # print(' BEAM VALIDATION Sentence Accuracy: {}, Word Accuracy: {}'.format(bts / bs, btw / bw))
+            # if bts/bs > best_val:
+            #     best_val = bts/bs
+            if dev_cat_acc > best_val or dev_cat_acc == best_val and (best_val_loss is None or dev_loss < best_val_loss):
+                best_epoch = i + 1
+                checkpoint = {'model_state_dict': model.state_dict(),
+                              'epoch': best_epoch,
+                              'dev_acc': dev_cat_acc,
+                              'dev_atom_acc': dev_atom_acc,
+                              'dev_loss': dev_loss
+                              }
+                # with open('model_{}_{}.pt'.format(i, btw/bw), 'wb') as f:
+                with open(f'{args.model}.pt', 'wb') as f:
+                    torch.save(checkpoint, f)
 
-                print('Epoch {}'.format(i+1), file=logfile)
-                print(' VALIDATION Loss: {}, Sentence Accuracy: {}, Atomic Accuracy: {}, Category Accuracy: {}'.format(
-                    loss, bts / bs, btw / bw, cat_acc), file=logfile)
+            print('[epoch %d summary] train loss: %.3f | train atom acc: %.3f | dev loss: %.3f | dev atom acc: %.3f | dev acc: %.3f' %
+                  (i + 1,
+                   loss,
+                   epoch_acc,
+                   dev_loss,
+                   dev_atom_acc,
+                   dev_cat_acc),
+                  file=sys.stderr)
 
-                print(f'most common gold categories (out of {bc} in dev): '
-                      f'{" | ".join(str(item) for item in gold_categories.most_common(10))}', file=logfile)
-                print(f'most common generated categories (out of {bc} in dev): '
-                      f'{" | ".join(str(item) for item in generated_categories.most_common(10))}', file=logfile)
-                print(f'most common correct categories (out of {bc} in dev): '
-                      f'{" | ".join(str(item) for item in correct_categories.most_common(10))}', file=logfile)
+            if len(args.development_files) > 0:
+                print(f'most common gold categories (out of {dev_bc} in dev): '
+                      f'{" | ".join(str(item) for item in gold_categories.most_common(10))}',
+                      file=sys.stderr)
+                print(f'most common generated categories (out of {dev_bc} in dev): '
+                      f'{" | ".join(str(item) for item in generated_categories.most_common(10))}',
+                      file=sys.stderr)
+                print(f'most common correct categories (out of {dev_bc} in dev): '
+                      f'{" | ".join(str(item) for item in correct_categories.most_common(10))}',
+                      file=sys.stderr)
 
-                # bs, bts, bw, btw = n.eval_epoch_beam(tlg, batch_size, val_indices, beam_size)
-                # print(' BEAM VALIDATION Sentence Accuracy: {}, Word Accuracy: {}'.format(bts / bs, btw / bw))
-                # if bts/bs > best_val:
-                #     best_val = bts/bs
-                if cat_acc > best_val or cat_acc == best_val and (best_val_loss is None or loss < best_val_loss):
-                    best_epoch = i + 1
-                    checkpoint = {'model_state_dict': model.state_dict(),
-                                  'epoch': best_epoch,
-                                  'dev_acc': cat_acc,
-                                  'dev_atom_acc': btw/bw,
-                                  'dev_loss': loss
-                                  }
-                    # with open('model_{}_{}.pt'.format(i, btw/bw), 'wb') as f:
-                    with open(f'{args.model}.pt', 'wb') as f:
-                        torch.save(checkpoint, f)
+            sys.stderr.flush()
 
     print('Found model. Loading parameters...', file=sys.stderr)
-    print('Found model. Loading parameters...', file=logfile)
+    # print('Found model. Loading parameters...', file=logfile)
     with open(f'{args.model}.pt', 'rb') as f:
         checkpoint = torch.load(f, map_location=args.device)
     model.load_state_dict(checkpoint.get('model_state_dict', checkpoint))
@@ -636,16 +701,16 @@ def do_everything(tlg=None):
     print('best dev atomic acc:', best_atom_val, file=sys.stderr)
     print('best dev loss:', best_val_loss, file=sys.stderr)
 
-    print(sum(p.numel() for p in model.parameters() if p.requires_grad), ' parameters', file=logfile)
-    print(sum(p.numel() for p in model.transformer.encoder.parameters() if p.requires_grad), ' parameters in encoder',
-          file=logfile)
-    print(sum(p.numel() for p in model.transformer.decoder.parameters() if p.requires_grad), ' parameters in decoder',
-          file=logfile)
+    # print(sum(p.numel() for p in model.parameters() if p.requires_grad), ' parameters', file=logfile)
+    # print(sum(p.numel() for p in model.transformer.encoder.parameters() if p.requires_grad), ' parameters in encoder',
+    #       file=logfile)
+    # print(sum(p.numel() for p in model.transformer.decoder.parameters() if p.requires_grad), ' parameters in decoder',
+    #       file=logfile)
 
-    print('best epoch:', start_epoch, file=logfile)
-    print('best dev acc:', best_val, file=logfile)
-    print('best dev atomic acc:', best_atom_val, file=logfile)
-    print('best dev loss:', best_val_loss, file=logfile)
+    # print('best epoch:', start_epoch, file=logfile)
+    # print('best dev acc:', best_val, file=logfile)
+    # print('best dev atomic acc:', best_atom_val, file=logfile)
+    # print('best dev loss:', best_val_loss, file=logfile)
 
     argmaxes = model.infer_epoch(tlg, batch_size, test_indices, gen.max_len + 1)  # max_len argument is per-word, not for whole sequence!!!
     cats = gen.extract_outputs(argmaxes)
