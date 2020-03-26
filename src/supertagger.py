@@ -190,7 +190,7 @@ class Supertagger(nn.Module):
                     batch_p = torch.cat([batch_p,
                                          torch.zeros(batch_p.shape[0], batch_y.shape[1] - batch_p.size(1), batch_p.shape[2]).to(batch_p)],
                                         dim=1)
-                batch_loss = criterion(torch.log(batch_p[:, :-1]).permute(0, 2, 1), batch_y[:, 1:].to(self.device))
+                batch_loss = criterion(torch.log(batch_p[:, :-1]).permute(0, 2, 1), batch_y[:, 1:].to(self.device)) / lens.float().sum()
                 loss += batch_loss.item()
                 argmaxes = batch_p[:, :-1].argmax(dim=-1)
                 y = batch_y[:, 1:]
@@ -644,6 +644,8 @@ def do_everything(tlg=None):
             #     best_val = bts/bs
             if dev_cat_acc > best_val or dev_cat_acc == best_val and (best_val_loss is None or dev_loss < best_val_loss):
                 best_epoch = i + 1
+                best_val = dev_cat_acc
+                best_val_loss = dev_loss
                 checkpoint = {'model_state_dict': model.state_dict(),
                               'epoch': best_epoch,
                               'dev_acc': dev_cat_acc,
