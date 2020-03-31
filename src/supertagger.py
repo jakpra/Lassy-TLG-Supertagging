@@ -310,6 +310,8 @@ class Supertagger(nn.Module):
 
             P = []
 
+            running_batch_time = 0.0
+
             # while batch_start < len(permutation):
             for i in range(len(permutation)):
                 # batch_end = min([batch_start + batch_size, len(permutation)])
@@ -330,14 +332,18 @@ class Supertagger(nn.Module):
                 for i, l in enumerate(lens):
                     encoder_mask[i, :, l::] = 0
                 encoder_mask = encoder_mask.to(self.device)
+
+                start_time = time.time()
                 batch_p = self.transformer.infer(batch_x, encoder_mask, dataset.type_dict[START])
                                                  # dataset.type_dict[SEP], lens)
+                running_batch_time += time.time() - start_time
+
                 batch_p = batch_p[:, :-1].argmax(dim=-1).cpu().numpy().tolist()
                 # P.append(batch_p)
                 P.extend(batch_p)
                 # batch_start += batch_size
 
-        return P
+        return P, running_batch_time
 
     def eval_epoch_beam(self, dataset: TLGDataset, batch_size: int, val_indices: List[int], beam_width: int) -> Any:
         self.eval()
@@ -716,8 +722,17 @@ def do_everything(tlg=None):
     # print('best dev atomic acc:', best_atom_val, file=logfile)
     # print('best dev loss:', best_val_loss, file=logfile)
 
-    argmaxes = model.infer_epoch(tlg, batch_size, test_indices, gen.max_len + 1)  # max_len argument is per-word, not for whole sequence!!!
+    argmaxes, running_batch_time = model.infer_epoch(tlg, batch_size, test_indices, gen.max_len + 1)  # max_len argument is per-word, not for whole sequence!!!
     cats = gen.extract_outputs(argmaxes)
+    # _, _, _, _, _, _, _, _, cats, _ = model.eval_epoch(
+    #     tlg, batch_size, test_indices, gen, L)
+
+    test_len = len(test_indices)
+    print('[test summary] %.3f batches/s | %.3 expls/s' %
+          (test_len / running_batch_time,
+           (test_len * batch_size) / running_batch_time
+           ),
+          file=sys.stderr)
         # running_test_acc += correct_bool.float().mean(dim=[0, 1]).item()
 
     # dev_acc = running_test_acc / len(testloader)
