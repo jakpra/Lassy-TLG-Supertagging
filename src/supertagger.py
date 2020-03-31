@@ -728,7 +728,7 @@ def do_everything(tlg=None):
     #     tlg, batch_size, test_indices, gen, L)
 
     test_len = len(test_indices)
-    print('[test summary] %.3f batches/s | %.3 expls/s' %
+    print('[test summary] %.3f batches/s | %.3f expls/s' %
           (test_len / running_batch_time,
            (test_len * batch_size) / running_batch_time
            ),
