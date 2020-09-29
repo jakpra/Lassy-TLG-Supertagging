@@ -432,6 +432,9 @@ def do_everything(tlg=None):
 
     args = ap.main()
 
+    if not args.model_exists:
+        assert args.mode == Mode.train, 'If model does not exist, mode has to be \'train\'.'
+
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
 
@@ -460,18 +463,11 @@ def do_everything(tlg=None):
         tlg, train_indices, val_indices, test_indices, st = dataprep.do_everything_ccg(args, d_model)
 
     gen = st.generators[0]
+    # num_classes = len(tlg.type_dict) + 1
+    num_classes = gen.output_dim + 1
 
     # logfile = open(f'{args.model}.log', 'w')
 
-    # num_classes = len(tlg.type_dict) + 1
-    num_classes = gen.output_dim + 1
-    # print('Training on {} classes'.format(len(tlg.type_dict)))
-    print('Training on {} classes'.format(gen.output_dim), file=sys.stderr)
-    # print('Training on {} classes'.format(gen.output_dim), file=logfile)
-    # n = Supertagger(num_classes, 4, 3, 3, 600, dropout=0.2, device='cuda', d_model=d_model)
-    model = Supertagger(num_classes + 1, encoder_heads=3, decoder_heads=8, encoder_layers=1,
-                    decoder_layers=2, d_intermediate=d_model, device=args.device, dropout=dropout, d_model=d_model,
-                    padding_index=gen.out_to_ix[PAD])
 
     class EncoderWrapper(nn.Module):
         def __init__(self, enc):
@@ -482,100 +478,109 @@ def do_everything(tlg=None):
             return EncoderInput(encoder_input=self.encoder(vars(x.encoder_input), word_mask=x.mask, device=args.device)[0],
                                 mask=x.mask)
 
-    model.transformer.encoder = EncoderWrapper(st.span_encoder)
-
-    model = model.to(args.device)
-
-    # L = FuzzyLoss(torch.nn.KLDivLoss(reduction='batchmean'), num_classes, 0.2, gen.out_to_ix[PAD])
-    L = torch.nn.CrossEntropyLoss(reduction='sum', ignore_index=gen.out_to_ix[PAD])
-
-    print(model, file=sys.stderr)
-
-    model_exists = Path(f'{args.model}.pt').is_file()
-
-    if model_exists:
-        print('Found model. Loading parameters...', file=sys.stderr)
-        with open(f'{args.model}.pt', 'rb') as f:
-            # self_dict = n.state_dict()
-            # import re
-            checkpoint = torch.load(f, map_location=args.device)
-            # for k, p in pretrained.items():
-            # TODO: I assume these are for a model that was pretrained with a different architecture (TypeLM)?
-            # k = re.sub(r'network', 'transformer.decoder', k)
-            # k = re.sub(r'mha', 'mask_mha', k)
-            # k = re.sub(r'embedding_matrix', 'transformer.embedding_matrix', k)
-            # k = re.sub(r'predictor', 'transformer.predictor', k)
-            # if k in self_dict.keys():
-            #     self_dict[k] = p
-            #     print('replaced {}'.format(k))
-            # else:
-            #     continue
-            # n.load_state_dict(self_dict)
-        model.load_state_dict(checkpoint.get('model_state_dict', checkpoint))
-        best_val = checkpoint.get('dev_acc', 0.0)
-        best_atom_val = checkpoint.get('dev_atom_acc', 0.0)
-        best_val_loss = checkpoint.get('dev_loss', None)
-        start_epoch = checkpoint.get('epoch', 0)
-
-        if 'model_state_dict' in checkpoint:
-            del checkpoint['model_state_dict']
-        else:
-            del checkpoint
-
-        print(sum(p.numel() for p in model.parameters() if p.requires_grad), ' parameters', file=sys.stderr)
-        print(sum(p.numel() for p in model.transformer.encoder.parameters() if p.requires_grad),
-              ' parameters in encoder',
-              file=sys.stderr)
-        print(sum(p.numel() for p in model.transformer.decoder.parameters() if p.requires_grad),
-              ' parameters in decoder',
-              file=sys.stderr)
-
-        print('best epoch:', start_epoch, file=sys.stderr)
-        print('best dev acc:', best_val, file=sys.stderr)
-        print('best dev atomic acc:', best_atom_val, file=sys.stderr)
-        print('best dev loss:', best_val_loss, file=sys.stderr)
-
-        dev_loss, dev_bs, dev_bts, dev_bw, dev_btw, dev_bc, dev_btc, gold_categories, generated_categories, correct_categories = model.eval_epoch(tlg, batch_size, val_indices, gen, L)
-        dev_atom_acc = dev_btw / dev_bw
-        dev_cat_acc = dev_btc / dev_bc
-        # print('Epoch {}'.format(start_epoch), file=sys.stderr)
-        # print(' VALIDATION Loss: {}, Sentence Accuracy: {}, Atomic Accuracy: {}, Category Accuracy: {}'.format(
-        #     loss, bts / bs, btw / bw, cat_acc), file=sys.stderr)
-        print(
-            '[epoch %d summary] train loss: %.3f | train atom acc: %.3f | dev loss: %.3f | dev atom acc: %.3f | dev acc: %.3f' %
-            (start_epoch,
-             0.0,
-             0.0,
-             dev_loss,
-             dev_atom_acc,
-             dev_cat_acc),
-            file=sys.stderr)
-
-        print(f'most common gold categories (out of {dev_bc} in dev): '
-              f'{" | ".join(str(item) for item in gold_categories.most_common(10))}', file=sys.stderr)
-        print(f'most common generated categories (out of {dev_bc} in dev): '
-              f'{" | ".join(str(item) for item in generated_categories.most_common(10))}', file=sys.stderr)
-        print(f'most common correct categories (out of {dev_bc} in dev): '
-              f'{" | ".join(str(item) for item in correct_categories.most_common(10))}', file=sys.stderr)
-
-    else:
-        best_val = 0.0
-        best_val_loss = None
-        start_epoch = 0
-
-        print(sum(p.numel() for p in model.parameters() if p.requires_grad), ' parameters', file=sys.stderr)
-        print(sum(p.numel() for p in model.transformer.encoder.parameters() if p.requires_grad),
-              ' parameters in encoder',
-              file=sys.stderr)
-        print(sum(p.numel() for p in model.transformer.decoder.parameters() if p.requires_grad),
-              ' parameters in decoder',
-              file=sys.stderr)
-
     if args.mode == Mode.train:
+
+        # print('Training on {} classes'.format(len(tlg.type_dict)))
+        print('Training on {} classes'.format(gen.output_dim), file=sys.stderr)
+        # print('Training on {} classes'.format(gen.output_dim), file=logfile)
+        # n = Supertagger(num_classes, 4, 3, 3, 600, dropout=0.2, device='cuda', d_model=d_model)
+        model = Supertagger(num_classes + 1, encoder_heads=3, decoder_heads=8, encoder_layers=1,
+                            decoder_layers=2, d_intermediate=d_model, device=args.device, dropout=dropout,
+                            d_model=d_model,
+                            padding_index=gen.out_to_ix[PAD])
+
+        model.transformer.encoder = EncoderWrapper(st.span_encoder)
+
+        model = model.to(args.device)
+
+        # L = FuzzyLoss(torch.nn.KLDivLoss(reduction='batchmean'), num_classes, 0.2, gen.out_to_ix[PAD])
+        L = torch.nn.CrossEntropyLoss(reduction='sum', ignore_index=gen.out_to_ix[PAD])
+
+        print(model, file=sys.stderr)
+
+        if args.model_exists:
+            print('Found model. Loading parameters...', file=sys.stderr)
+            with open(f'{args.model}.pt', 'rb') as f:
+                # self_dict = n.state_dict()
+                # import re
+                checkpoint = torch.load(f, map_location=args.device)
+                # for k, p in pretrained.items():
+                # TODO: I assume these are for a model that was pretrained with a different architecture (TypeLM)?
+                # k = re.sub(r'network', 'transformer.decoder', k)
+                # k = re.sub(r'mha', 'mask_mha', k)
+                # k = re.sub(r'embedding_matrix', 'transformer.embedding_matrix', k)
+                # k = re.sub(r'predictor', 'transformer.predictor', k)
+                # if k in self_dict.keys():
+                #     self_dict[k] = p
+                #     print('replaced {}'.format(k))
+                # else:
+                #     continue
+                # n.load_state_dict(self_dict)
+            model.load_state_dict(checkpoint.get('model_state_dict', checkpoint))
+            best_val = checkpoint.get('dev_acc', 0.0)
+            best_atom_val = checkpoint.get('dev_atom_acc', 0.0)
+            best_val_loss = checkpoint.get('dev_loss', None)
+            start_epoch = checkpoint.get('epoch', 0)
+
+            if 'model_state_dict' in checkpoint:
+                del checkpoint['model_state_dict']
+            else:
+                del checkpoint
+
+            print(sum(p.numel() for p in model.parameters() if p.requires_grad), ' parameters', file=sys.stderr)
+            print(sum(p.numel() for p in model.transformer.encoder.parameters() if p.requires_grad),
+                  ' parameters in encoder',
+                  file=sys.stderr)
+            print(sum(p.numel() for p in model.transformer.decoder.parameters() if p.requires_grad),
+                  ' parameters in decoder',
+                  file=sys.stderr)
+
+            print('best epoch:', start_epoch, file=sys.stderr)
+            print('best dev acc:', best_val, file=sys.stderr)
+            print('best dev atomic acc:', best_atom_val, file=sys.stderr)
+            print('best dev loss:', best_val_loss, file=sys.stderr)
+
+            dev_loss, dev_bs, dev_bts, dev_bw, dev_btw, dev_bc, dev_btc, gold_categories, generated_categories, correct_categories = model.eval_epoch(tlg, batch_size, val_indices, gen, L)
+            dev_atom_acc = dev_btw / dev_bw
+            dev_cat_acc = dev_btc / dev_bc
+            # print('Epoch {}'.format(start_epoch), file=sys.stderr)
+            # print(' VALIDATION Loss: {}, Sentence Accuracy: {}, Atomic Accuracy: {}, Category Accuracy: {}'.format(
+            #     loss, bts / bs, btw / bw, cat_acc), file=sys.stderr)
+            print(
+                '[epoch %d summary] train loss: %.3f | train atom acc: %.3f | dev loss: %.3f | dev atom acc: %.3f | dev acc: %.3f' %
+                (start_epoch,
+                 0.0,
+                 0.0,
+                 dev_loss,
+                 dev_atom_acc,
+                 dev_cat_acc),
+                file=sys.stderr)
+
+            print(f'most common gold categories (out of {dev_bc} in dev): '
+                  f'{" | ".join(str(item) for item in gold_categories.most_common(10))}', file=sys.stderr)
+            print(f'most common generated categories (out of {dev_bc} in dev): '
+                  f'{" | ".join(str(item) for item in generated_categories.most_common(10))}', file=sys.stderr)
+            print(f'most common correct categories (out of {dev_bc} in dev): '
+                  f'{" | ".join(str(item) for item in correct_categories.most_common(10))}', file=sys.stderr)
+
+        else:
+            best_val = 0.0
+            best_val_loss = None
+            start_epoch = 0
+
+            print(sum(p.numel() for p in model.parameters() if p.requires_grad), ' parameters', file=sys.stderr)
+            print(sum(p.numel() for p in model.transformer.encoder.parameters() if p.requires_grad),
+                  ' parameters in encoder',
+                  file=sys.stderr)
+            print(sum(p.numel() for p in model.transformer.decoder.parameters() if p.requires_grad),
+                  ' parameters in decoder',
+                  file=sys.stderr)
+
+
         epochs = args.epochs
         # TODO: does reloading work at all with the LRScheduler?
 
-        if model_exists:
+        if args.model_exists:
             print('Resuming training...', file=sys.stderr)
         else:
             print('Model not found. Starting from scratch...', file=sys.stderr)
@@ -684,10 +689,24 @@ def do_everything(tlg=None):
 
             sys.stderr.flush()
 
+        del model
+        torch.cuda.empty_cache()
+
     print('Found model. Loading parameters...', file=sys.stderr)
     # print('Found model. Loading parameters...', file=logfile)
+
     with open(f'{args.model}.pt', 'rb') as f:
         checkpoint = torch.load(f, map_location=args.device)
+
+    model = Supertagger(num_classes + 1, encoder_heads=3, decoder_heads=8, encoder_layers=1,
+                        decoder_layers=2, d_intermediate=d_model, device=args.device, dropout=dropout,
+                        d_model=d_model,
+                        padding_index=gen.out_to_ix[PAD])
+
+    model.transformer.encoder = EncoderWrapper(st.span_encoder)
+
+    model = model.to(args.device)
+
     model.load_state_dict(checkpoint.get('model_state_dict', checkpoint))
 
     best_val = checkpoint.get('dev_acc', 0.0)
