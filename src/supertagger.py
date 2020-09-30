@@ -491,8 +491,6 @@ def do_everything(tlg=None):
 
         model.transformer.encoder = EncoderWrapper(st.span_encoder)
 
-        model = model.to(args.device)
-
         # L = FuzzyLoss(torch.nn.KLDivLoss(reduction='batchmean'), num_classes, 0.2, gen.out_to_ix[PAD])
         L = torch.nn.CrossEntropyLoss(reduction='sum', ignore_index=gen.out_to_ix[PAD])
 
@@ -539,6 +537,9 @@ def do_everything(tlg=None):
             print('best dev acc:', best_val, file=sys.stderr)
             print('best dev atomic acc:', best_atom_val, file=sys.stderr)
             print('best dev loss:', best_val_loss, file=sys.stderr)
+
+            model = model.to(args.device)
+            # model.eval()
 
             dev_loss, dev_bs, dev_bts, dev_bw, dev_btw, dev_bc, dev_btc, gold_categories, generated_categories, correct_categories = model.eval_epoch(tlg, batch_size, val_indices, gen, L)
             dev_atom_acc = dev_btw / dev_bw
@@ -613,6 +614,8 @@ def do_everything(tlg=None):
 
         for i in range(start_epoch, start_epoch+epochs):
             # loss, bs, bts, bw, btw = model.train_epoch(tlg, batch_size, L, o, train_indices)
+
+            # model.train()
             loss, bs, bts, bw, btw = model.train_epoch(tlg, batch_size, L, o if args.use_schedule else a, train_indices)
             # print('Epoch {}'.format(i+1), file=sys.stderr)
             # print(' Loss: {}, Sentence Accuracy: {}, Atomic Accuracy: {}'.format(loss, bts/bs, btw/bw), file=sys.stderr)
@@ -623,6 +626,7 @@ def do_everything(tlg=None):
 
             # if i % 5 == 0 and i != 0:
             # if i % args.n_print == args.n_print - 1 and i != 0:
+            # model.eval()
             dev_loss, dev_bs, dev_bts, dev_bw, dev_btw, dev_bc, dev_btc, gold_categories, generated_categories, correct_categories = model.eval_epoch(
                 tlg, batch_size, val_indices, gen, L)
             dev_atom_acc = dev_btw / dev_bw
@@ -705,7 +709,6 @@ def do_everything(tlg=None):
 
     model.transformer.encoder = EncoderWrapper(st.span_encoder)
 
-    model = model.to(args.device)
 
     model.load_state_dict(checkpoint.get('model_state_dict', checkpoint))
 
@@ -740,6 +743,9 @@ def do_everything(tlg=None):
     # print('best dev acc:', best_val, file=logfile)
     # print('best dev atomic acc:', best_atom_val, file=logfile)
     # print('best dev loss:', best_val_loss, file=logfile)
+
+    model = model.to(args.device)
+    # model.eval()
 
     argmaxes, running_batch_time = model.infer_epoch(tlg, batch_size, test_indices, gen.max_len + 1)  # max_len argument is per-word, not for whole sequence!!!
     cats = gen.extract_outputs(argmaxes)
